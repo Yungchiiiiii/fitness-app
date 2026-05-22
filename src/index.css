@@ -463,6 +463,44 @@ input  { font-family: inherit; }
   outline: 2px solid rgba(249,115,22,0.26);
 }
 
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  touch-action: pan-y;
+}
+
+.swipe-actions {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 156px;
+  display: flex;
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+.swipe-actions button {
+  flex: 1;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.swipe-edit {
+  background: #FF9500;
+}
+
+.swipe-delete {
+  background: #FF3B30;
+}
+
+.swipe-card {
+  position: relative;
+  z-index: 1;
+  transition: transform 0.18s ease;
+  user-select: none;
+}
+
 .timer-ring::before {
   content: "";
   position: absolute;

@@ -13,12 +13,29 @@ const initialGoals = {
   fat: 65,
 }
 
+const clampTrainingDays = (value) => Math.max(1, Math.min(7, Number(value) || 1))
+const loadGoals = () => {
+  try {
+    const saved = window.localStorage.getItem('fitness-goals')
+    if (!saved) return initialGoals
+    return { ...initialGoals, ...JSON.parse(saved) }
+  } catch {
+    return initialGoals
+  }
+}
+const saveGoals = (goals) => {
+  const normalized = { ...goals, trainingDays: clampTrainingDays(goals.trainingDays) }
+  window.localStorage.setItem('fitness-goals', JSON.stringify(normalized))
+  window.dispatchEvent(new CustomEvent('fitness-goals-updated', { detail: normalized }))
+  return normalized
+}
+
 export default function ProfileScreen({ session }) {
   const name = session?.user?.user_metadata?.name || '使用者'
   const email = session?.user?.email
   const [weeklyWeight, setWeeklyWeight] = useState('60.0')
   const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
-  const [goals, setGoals] = useState(initialGoals)
+  const [goals, setGoals] = useState(loadGoals)
   const [showGoals, setShowGoals] = useState(false)
   const targetText = goals.targets?.join('、') || '尚未選擇目標'
 
@@ -105,7 +122,7 @@ export default function ProfileScreen({ session }) {
 
       <button className="btn-ghost" style={{ marginTop: 24 }} onClick={() => signOut()}>登出</button>
 
-      {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={(next) => { setGoals(next); setShowGoals(false) }} />}
+      {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={(next) => { setGoals(saveGoals(next)); setShowGoals(false) }} />}
     </div>
   )
 }
@@ -167,7 +184,16 @@ function GoalSheet({ goals, onClose, onSave }) {
 
         <div style={{ marginTop: 10 }}>
           <Field label="每週訓練天數" suffix="天">
-            <input className="inp" type="number" placeholder="例如 5" value={draft.trainingDays} onChange={e => setDraft({ ...draft, trainingDays: e.target.value })} />
+            <input
+              className="inp"
+              type="number"
+              min="1"
+              max="7"
+              placeholder="最多 7"
+              value={draft.trainingDays}
+              onChange={e => setDraft({ ...draft, trainingDays: e.target.value })}
+              onBlur={() => setDraft({ ...draft, trainingDays: clampTrainingDays(draft.trainingDays) })}
+            />
           </Field>
         </div>
 

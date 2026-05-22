@@ -35,7 +35,7 @@ export const getInputType = (exName) => {
 export const getCategory = (exName) => {
   for (const [cat, names] of Object.entries(EXERCISE_LIBRARY))
     if (names.includes(exName)) return cat
-  return 'upper'
+  return 'other'
 }
 
 export const getLastSets = (sessions, exName, inputType) => {
@@ -64,7 +64,7 @@ export const getLastSets = (sessions, exName, inputType) => {
 const defaultSet = (inputType) => {
   if (inputType === 'cardio') return { duration_min: '', speed: '' }
   if (inputType === 'core') return { duration_min: '', load: '' }
-  if (inputType === 'sport')  return { duration_min: '' }
+  if (inputType === 'sport')  return { duration_min: '60' }
   return { weight: '', reps: '' }
 }
 
@@ -253,7 +253,8 @@ export function SetsFillerSheet({ selected, date, sessions, prototypeOnly = fals
             payload.weight = parseFloat(s.load) || null
             payload.unit = s.load ? 'kg' : 'bodyweight'
           } else {
-            payload.duration_seconds = s.duration_min ? Math.round(parseFloat(s.duration_min) * 60) : null
+            payload.duration_seconds = Math.round((parseFloat(s.duration_min) || 60) * 60)
+            payload.unit = 'minutes'
           }
           const { error: e3 } = await createSet(payload)
           if (e3) throw new Error(`新增組數失敗: ${e3.message}`)
@@ -289,8 +290,8 @@ export function SetsFillerSheet({ selected, date, sessions, prototypeOnly = fals
         order_index: j,
         weight: parseFloat(s.weight || s.speed || s.load) || null,
         reps: parseInt(s.reps) || null,
-        duration_seconds: s.duration_min ? Math.round(parseFloat(s.duration_min) * 60) : null,
-        unit: item.inputType === 'cardio' ? 'kmh' : item.inputType === 'core' && !s.load ? 'bodyweight' : 'kg',
+        duration_seconds: item.inputType === 'sport' ? Math.round((parseFloat(s.duration_min) || 60) * 60) : (s.duration_min ? Math.round(parseFloat(s.duration_min) * 60) : null),
+        unit: item.inputType === 'cardio' ? 'kmh' : item.inputType === 'sport' ? 'minutes' : item.inputType === 'core' && !s.load ? 'bodyweight' : 'kg',
       })),
     })),
   })

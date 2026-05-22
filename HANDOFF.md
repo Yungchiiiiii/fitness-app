@@ -26,6 +26,11 @@
 - Profile page uses weekly weight logging, goal settings, editable macro targets, and AI recalculation.
 - Profile weight chart now shows numeric weight labels at each point.
 - Profile goal editing now labels every input, uses multi-select goals (`增肌`, `減脂`, `維持體重`, `提升運動表現`), clarifies the weekly training-days field, and places AI recalculation directly above the macro target inputs.
+- Weekly training target is now stored locally and synced back to the dashboard. The dashboard `週目標` and weekly progress card follow the profile setting, capped from 1 to 7 days.
+- Add meal photo mode now has a photo picker, a text description field, and AI nutrition analysis through the Supabase `fitness-ai` Edge Function. The frontend does not store AI keys.
+- AI coach chat now calls the Supabase `fitness-ai` Edge Function and includes prototype app context: macros, pain logs, weight trend, recent training, and today's meals. It falls back to a safe local reply if the API is unavailable.
+- Recent training cards and daily meal cards use iOS-style left swipe actions for edit/delete.
+- `其他` training category is safer for prototype save: sport entries default to 60 minutes and persist with a duration unit.
 
 ## Key Files
 - `src/App.jsx`: app shell and 4-tab navigation.
@@ -36,7 +41,10 @@
 - `src/screens/ProfileScreen.jsx`: weekly weight and editable goals.
 - `src/components/NewSessionModal.jsx`: exercise picker and training entry modal.
 - `src/lib/prototypeData.js`: mock sessions, meal calendar, progress data, exercise categories, AI context.
+- `src/lib/ai.js`: frontend helper that calls Supabase `fitness-ai`.
+- `supabase/functions/fitness-ai/index.ts`: backend AI proxy for food analysis and coach chat. Configure `GEMINI_API_KEY` and/or `GROQ_API_KEY` as Supabase function secrets; do not commit real keys.
 - `src/index.css`: iOS-inspired light design tokens, shared UI helpers, goal form styles, and exercise picker styles.
+- `.env.example`: expected local API key variables. Do not upload real keys.
 
 ## Verified
 - `npm run build` passes.
@@ -45,6 +53,10 @@
   - training progress tab
   - training exercise category picker
   - profile goal-edit bottom sheet
+  - dashboard weekly target syncing after profile changes
+  - add meal photo/description analysis UI
+  - AI coach real API fallback path
+  - recent training and meal swipe actions
   - diet calendar and add-meal sheet
   - AI chat input and mock reply
   - top-right avatar opening profile/settings

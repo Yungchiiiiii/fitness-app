@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { analyzeFoodWithGemini } from '../lib/ai'
 import { frequentFoods, mealCalendar } from '../lib/prototypeData'
 
 const todayDay = 21
@@ -20,12 +21,54 @@ export default function DietScreen() {
           protein: current.protein + meal.protein,
           carbs: current.carbs + (meal.carbs || 0),
           fat: current.fat + (meal.fat || 0),
-          meals: [...current.meals, { name: meal.meal, food: meal.name, protein: meal.protein, kcal: meal.kcal }],
+          meals: [...current.meals, {
+            name: meal.meal,
+            food: meal.name,
+            protein: meal.protein,
+            kcal: meal.kcal,
+            carbs: meal.carbs || 0,
+            fat: meal.fat || 0,
+            note: meal.note || '',
+          }],
           advice: '已加入新餐點；晚點 AI 可依整天總量再微調建議。',
         },
       }
     })
     setShowAdd(false)
+  }
+  const deleteMeal = (idx) => {
+    setCalendar(prev => {
+      const current = prev[selectedDay] || emptyDay
+      const meal = current.meals[idx]
+      if (!meal) return prev
+      return {
+        ...prev,
+        [selectedDay]: {
+          ...current,
+          calories: Math.max(0, current.calories - (meal.kcal || 0)),
+          protein: Math.max(0, current.protein - (meal.protein || 0)),
+          carbs: Math.max(0, current.carbs - (meal.carbs || 0)),
+          fat: Math.max(0, current.fat - (meal.fat || 0)),
+          meals: current.meals.filter((_, i) => i !== idx),
+          advice: '已更新餐點紀錄；AI 建議會依新的總量重新判讀。',
+        },
+      }
+    })
+  }
+  const editMealNote = (idx) => {
+    const meal = day.meals[idx]
+    const next = window.prompt('編輯餐點備註', meal?.note || '')
+    if (next === null) return
+    setCalendar(prev => {
+      const current = prev[selectedDay] || emptyDay
+      return {
+        ...prev,
+        [selectedDay]: {
+          ...current,
+          meals: current.meals.map((item, i) => i === idx ? { ...item, note: next } : item),
+        },
+      }
+    })
   }
 
   return (
@@ -67,18 +110,12 @@ export default function DietScreen() {
       <div className="section-title">當日飲食</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {day.meals.map((meal, idx) => (
-          <div key={`${meal.name}-${idx}`} className="card" style={{ padding: 15 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-              <div>
-                <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{meal.name}</div>
-                <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 4 }}>{meal.food}</div>
-              </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{meal.protein}g</div>
-                <div style={{ color: 'var(--ink-4)', fontSize: 12, marginTop: 4 }}>{meal.kcal} kcal</div>
-              </div>
-            </div>
-          </div>
+          <SwipeMealCard
+            key={`${meal.name}-${idx}`}
+            meal={meal}
+            onDelete={() => deleteMeal(idx)}
+            onEdit={() => editMealNote(idx)}
+          />
         ))}
       </div>
 
@@ -124,6 +161,11 @@ function CalendarGrid({ selectedDay, onSelect, data }) {
 function AddMealSheet({ onClose, onAdd }) {
   const [mode, setMode] = useState('quick')
   const [custom, setCustom] = useState({ meal: '午餐', name: '', kcal: '', protein: '', carbs: '', fat: '' })
+  const [photoFile, setPhotoFile] = useState(null)
+  const [photoDescription, setPhotoDescription] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState(null)
+  const [analysisError, setAnalysisError] = useState('')
   const validCustom = custom.name && custom.kcal && custom.protein
   const manualMeal = useMemo(() => ({
     ...custom,
@@ -132,6 +174,18 @@ function AddMealSheet({ onClose, onAdd }) {
     carbs: Number(custom.carbs) || 0,
     fat: Number(custom.fat) || 0,
   }), [custom])
+  const analyzePhoto = async () => {
+    setAnalyzing(true)
+    setAnalysisError('')
+    try {
+      const result = await analyzeFoodWithGemini({ file: photoFile, description: photoDescription })
+      setAnalysis(result)
+    } catch (error) {
+      setAnalysisError(error.message || 'AI 分析失敗')
+    } finally {
+      setAnalyzing(false)
+    }
+  }
 
   return (
     <div className="sheet-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -185,11 +239,88 @@ function AddMealSheet({ onClose, onAdd }) {
         )}
 
         {mode === 'photo' && (
-          <div className="card" style={{ marginTop: 16, textAlign: 'center', color: 'var(--ink-3)', padding: 32 }}>
-            <div style={{ fontSize: 28, marginBottom: 8 }}>CAM</div>
-            原型階段先保留拍照入口；正式版會串 AI 辨識食物。
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <label className="card" style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, cursor: 'pointer' }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>CAM</div>
+              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{photoFile ? photoFile.name : '選擇或拍攝餐點照片'}</div>
+              <div style={{ fontSize: 13, marginTop: 6 }}>Gemini 會依照片辨識食物與估算營養</div>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                style={{ display: 'none' }}
+                onChange={e => setPhotoFile(e.target.files?.[0] || null)}
+              />
+            </label>
+            <textarea
+              className="inp"
+              placeholder="補充描述：例如半碗飯、雞胸、醬比較多、飲料無糖..."
+              value={photoDescription}
+              onChange={e => setPhotoDescription(e.target.value)}
+              style={{ minHeight: 86, resize: 'none', lineHeight: 1.5 }}
+            />
+            <button className="btn-primary" disabled={analyzing || (!photoFile && !photoDescription.trim())} onClick={analyzePhoto}>
+              {analyzing ? 'AI 分析中...' : '用 Gemini 分析餐點'}
+            </button>
+            {analysisError && (
+              <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{analysisError}</div>
+            )}
+            {analysis && (
+              <div className="card" style={{ padding: 15 }}>
+                <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{analysis.meal} · {analysis.name}</div>
+                <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 6 }}>
+                  {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
+                </div>
+                <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
+                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd(analysis)}>加入這一天</button>
+              </div>
+            )}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function SwipeMealCard({ meal, onDelete, onEdit }) {
+  const [x, setX] = useState(0)
+  const [start, setStart] = useState(null)
+  const onMove = (clientX) => {
+    if (start === null) return
+    setX(Math.max(-156, Math.min(0, clientX - start)))
+  }
+  const end = () => {
+    setX(x < -54 ? -156 : 0)
+    setStart(null)
+  }
+  return (
+    <div className="swipe-row">
+      <div className="swipe-actions">
+        <button className="swipe-edit" onClick={onEdit}>備註</button>
+        <button className="swipe-delete" onClick={onDelete}>刪除</button>
+      </div>
+      <div
+        className="card swipe-card"
+        style={{ transform: `translateX(${x}px)` }}
+        onTouchStart={e => setStart(e.touches[0].clientX)}
+        onTouchMove={e => onMove(e.touches[0].clientX)}
+        onTouchEnd={end}
+        onMouseDown={e => setStart(e.clientX)}
+        onMouseMove={e => e.buttons === 1 && onMove(e.clientX)}
+        onMouseUp={end}
+        onMouseLeave={() => start !== null && end()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{meal.name}</div>
+            <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 4 }}>{meal.food}</div>
+            {meal.note && <div style={{ color: 'var(--ink-4)', fontSize: 12, marginTop: 5 }}>備註：{meal.note}</div>}
+          </div>
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{meal.protein}g</div>
+            <div style={{ color: 'var(--ink-4)', fontSize: 12, marginTop: 4 }}>{meal.kcal} kcal</div>
+          </div>
+        </div>
       </div>
     </div>
   )

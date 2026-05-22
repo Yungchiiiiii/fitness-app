@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { aiSuggestions, macroSnapshot, painLogs, weightLogs } from '../lib/prototypeData'
+import { askCoachWithAI } from '../lib/ai'
+import { aiSuggestions, demoSessions, macroSnapshot, mealCalendar, painLogs, weightLogs } from '../lib/prototypeData'
 
 const quickPrompts = ['今天肩膀不舒服，怎麼練胸？', '最近力量有點掉，飲食要調嗎？', '幫我排明天 45 分鐘訓練']
 
@@ -8,19 +9,29 @@ export default function CoachScreen() {
   const [messages, setMessages] = useState([
     { role: 'coach', text: '我看了你的訓練、飲食和恢復狀態。今天可以保留訓練節奏，但肩部推舉先降壓力。' },
   ])
+  const [thinking, setThinking] = useState(false)
 
-  const ask = (prompt = text) => {
+  const ask = async (prompt = text) => {
     const clean = prompt.trim()
-    if (!clean) return
-    setMessages(prev => [...prev, { role: 'user', text: clean }, { role: 'coach', text: buildReply(clean) }])
+    if (!clean || thinking) return
+    setMessages(prev => [...prev, { role: 'user', text: clean }])
     setText('')
+    setThinking(true)
+    try {
+      const reply = await askCoachWithAI({ prompt: clean, context: buildCoachContext() })
+      setMessages(prev => [...prev, { role: 'coach', text: reply }])
+    } catch (error) {
+      setMessages(prev => [...prev, { role: 'coach', text: buildReply(clean, error.message) }])
+    } finally {
+      setThinking(false)
+    }
   }
 
   return (
     <div className="screen-fade" style={{ paddingBottom: 116 }}>
       <div style={{ padding: '8px 4px 4px' }}>
         <div className="display" style={{ fontSize: 30, fontWeight: 900, color: 'var(--ink-1)' }}>AI 教練</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>可以直接輸入問題；原型階段用模擬回覆</div>
+        <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>會參考訓練、飲食、恢復與體重資料回答</div>
       </div>
 
       <div className="card" style={{ marginTop: 14, background: 'linear-gradient(135deg, #FF7A1E, #F43F5E)', color: '#fff' }}>
@@ -69,6 +80,21 @@ export default function CoachScreen() {
             {m.text}
           </div>
         ))}
+        {thinking && (
+          <div style={{
+            alignSelf: 'flex-start',
+            maxWidth: '88%',
+            padding: '11px 13px',
+            borderRadius: '16px 16px 16px 5px',
+            background: 'var(--bg-sunk)',
+            color: 'var(--ink-3)',
+            fontSize: 13,
+            lineHeight: 1.45,
+            fontWeight: 750,
+          }}>
+            AI 正在整理你的資料...
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginTop: 10, paddingBottom: 4 }}>
@@ -97,14 +123,34 @@ export default function CoachScreen() {
       }}>
         <div className="card" style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, borderRadius: 18 }}>
           <input className="inp" placeholder="直接問 AI：訓練、飲食、恢復..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && ask()} />
-          <button className="btn-primary" style={{ width: 52, padding: 0 }} onClick={() => ask()}>送出</button>
+          <button className="btn-primary" style={{ width: 52, padding: 0 }} disabled={thinking} onClick={() => ask()}>{thinking ? '...' : '送出'}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function buildReply(prompt) {
+function buildCoachContext() {
+  return {
+    macroSnapshot,
+    painLogs,
+    weightTrend: {
+      start: weightLogs[0],
+      latest: weightLogs.at(-1),
+    },
+    recentTraining: demoSessions.map(s => ({
+      date: s.date,
+      name: s.name,
+      exercises: s.session_exercises.map(ex => ({ name: ex.name, note: ex.note, sets: ex.exercise_sets.length })),
+    })),
+    todayMeals: mealCalendar[21],
+  }
+}
+
+function buildReply(prompt, reason = '') {
+  if (prompt.includes('腳') || prompt.includes('翻船') || prompt.includes('扭')) {
+    return `目前 AI API ${reason ? `暫時不可用（${reason}）` : '暫時不可用'}，先給你保守建議：如果右腳踝剛翻船，前 24-48 小時先減少跑跳與下肢負重，冰敷 10-15 分鐘、一天 2-4 次，抬高休息。若明顯腫脹、瘀青、無法承重或疼痛加劇，請看醫師或物理治療師。疼痛下降後再做腳踝畫圈、彈力帶外翻/內翻、單腳平衡，循序回到訓練。`
+  }
   if (prompt.includes('肩')) return '今天胸部訓練建議用滑輪夾胸 3 組、機械胸推 2 組，RPE 控制在 6-7。只要痛感超過 5/10 就停止，別硬推重量。'
   if (prompt.includes('飲食') || prompt.includes('力量')) return '力量掉一點但體重也在下降，先不要再減熱量。訓練日前後加 20-30g 碳水，蛋白質維持每公斤 1.6-2g。'
   if (prompt.includes('明天')) return '明天做 45 分鐘下肢與核心：深蹲 3 組、腿推 3 組、腿彎舉 2 組、棒式 3 段。組間休息 90 秒。'

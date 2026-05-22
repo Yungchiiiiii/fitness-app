@@ -16,6 +16,7 @@ export default function HomeScreen({ session }) {
   const [fillData, setFillData] = useState(null)
   const [showProfile, setShowProfile] = useState(false)
   const [openDate, setOpenDate] = useState(null)
+  const [targetDays, setTargetDays] = useState(() => getSavedTargetDays())
 
   useEffect(() => {
     if (prototypeOnly) {
@@ -24,6 +25,11 @@ export default function HomeScreen({ session }) {
     }
     getSessions(session.user.id).then(({ data }) => setSessions(data || []))
   }, [prototypeOnly, session.user.id])
+  useEffect(() => {
+    const syncGoals = (event) => setTargetDays(clampTargetDays(event.detail?.trainingDays || getSavedTargetDays()))
+    window.addEventListener('fitness-goals-updated', syncGoals)
+    return () => window.removeEventListener('fitness-goals-updated', syncGoals)
+  }, [])
 
   const reload = () => {
     if (prototypeOnly) return
@@ -32,8 +38,13 @@ export default function HomeScreen({ session }) {
   const todayStr = today.toISOString().split('T')[0]
   const trainedToday = new Set(sessions.map(s => s.date)).has(todayStr)
   const trainedWeekDays = Math.max(new Set(sessions.slice(0, 7).map(s => s.date)).size, 3)
+  const weekProgress = Math.min(trainedWeekDays, targetDays)
   const proteinPct = Math.round((macroSnapshot.protein.value / macroSnapshot.protein.target) * 100)
   const groupedRecent = groupRecentSessions(sessions)
+  const deleteRecentDay = (date) => {
+    setSessions(prev => prev.filter(session => session.date !== date))
+    if (openDate === date) setOpenDate(null)
+  }
 
   return (
     <div className="screen-fade">
@@ -57,7 +68,7 @@ export default function HomeScreen({ session }) {
       <div className="metric-grid" style={{ marginTop: 18 }}>
         <MetricCard label="今日" value={trainedToday ? '已訓練' : '待開始'} detail={trainedToday ? 'Nice work' : '30-45 分鐘'} />
         <MetricCard label="蛋白質" value={`${macroSnapshot.protein.value}g`} detail={`${proteinPct}% / ${macroSnapshot.protein.target}g`} />
-        <MetricCard label="週目標" value={`${trainedWeekDays}/5`} detail="訓練日" />
+        <MetricCard label="週目標" value={`${weekProgress}/${targetDays}`} detail="訓練日" />
       </div>
 
       <button className="cta-card" style={{ marginTop: 16 }} onClick={() => setShowPicker(true)}>
@@ -74,10 +85,10 @@ export default function HomeScreen({ session }) {
             <div className="section-title" style={{ margin: 0 }}>本週運動目標</div>
             <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>穩定比爆衝更重要</div>
           </div>
-          <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>{trainedWeekDays}/5 天</span>
+          <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>{weekProgress}/{targetDays} 天</span>
         </div>
         <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${Math.min(100, trainedWeekDays / 5 * 100)}%` }} />
+          <div className="progress-fill" style={{ width: `${Math.min(100, trainedWeekDays / targetDays * 100)}%` }} />
         </div>
         <WeekStrip sessions={sessions} todayStr={todayStr} />
       </div>
@@ -113,6 +124,8 @@ export default function HomeScreen({ session }) {
             day={day}
             open={openDate === day.date}
             onToggle={() => setOpenDate(openDate === day.date ? null : day.date)}
+            onEdit={() => setOpenDate(day.date)}
+            onDelete={() => deleteRecentDay(day.date)}
           />
         ))}
       </div>
@@ -156,6 +169,20 @@ export default function HomeScreen({ session }) {
       )}
     </div>
   )
+}
+
+function clampTargetDays(value) {
+  return Math.max(1, Math.min(7, Number(value) || 5))
+}
+
+function getSavedTargetDays() {
+  try {
+    const saved = window.localStorage.getItem('fitness-goals')
+    if (!saved) return 5
+    return clampTargetDays(JSON.parse(saved).trainingDays)
+  } catch {
+    return 5
+  }
 }
 
 function MetricCard({ label, value, detail }) {
@@ -233,25 +260,38 @@ function MuscleRadar({ data }) {
   )
 }
 
-function RecentDayCard({ day, open, onToggle }) {
+function RecentDayCard({ day, open, onToggle, onEdit, onDelete }) {
   const [swipeX, setSwipeX] = useState(0)
+  const [startX, setStartX] = useState(null)
   const [openExercise, setOpenExercise] = useState(null)
   const dateLabel = new Date(day.date + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
-  const touchStart = (e) => { window.__recentSwipeStart = e.touches[0].clientX }
-  const touchMove = (e) => {
-    const dx = e.touches[0].clientX - (window.__recentSwipeStart || e.touches[0].clientX)
+  const move = (clientX) => {
+    if (startX === null) return
+    const dx = clientX - startX
     setSwipeX(Math.max(-160, Math.min(0, dx)))
   }
-  const touchEnd = () => setSwipeX(swipeX < -48 ? -160 : 0)
+  const end = () => {
+    setSwipeX(swipeX < -48 ? -160 : 0)
+    setStartX(null)
+  }
 
   return (
-    <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 18 }}>
-      <div style={{ position: 'absolute', inset: '0 0 0 auto', width: 160, display: 'flex' }}>
-        <button style={{ flex: 1, background: '#F59E0B', color: '#fff', fontWeight: 900 }}>編輯</button>
-        <button style={{ flex: 1, background: '#F43F5E', color: '#fff', fontWeight: 900 }}>刪除</button>
+    <div className="swipe-row">
+      <div className="swipe-actions">
+        <button className="swipe-edit" onClick={() => { onEdit(); setSwipeX(0) }}>編輯</button>
+        <button className="swipe-delete" onClick={onDelete}>刪除</button>
       </div>
-      <div className="card" style={{ transform: `translateX(${swipeX}px)`, transition: 'transform 0.18s ease', padding: 15 }}
-        onTouchStart={touchStart} onTouchMove={touchMove} onTouchEnd={touchEnd}>
+      <div
+        className="card swipe-card"
+        style={{ transform: `translateX(${swipeX}px)`, padding: 15 }}
+        onTouchStart={e => setStartX(e.touches[0].clientX)}
+        onTouchMove={e => move(e.touches[0].clientX)}
+        onTouchEnd={end}
+        onMouseDown={e => setStartX(e.clientX)}
+        onMouseMove={e => e.buttons === 1 && move(e.clientX)}
+        onMouseUp={end}
+        onMouseLeave={() => startX !== null && end()}
+      >
         <button onClick={onToggle} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left' }}>
           <ExerciseArt name={day.exercises[0]?.name} />
           <div style={{ flex: 1, minWidth: 0 }}>
