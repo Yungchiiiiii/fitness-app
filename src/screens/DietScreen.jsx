@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { analyzeFoodWithGemini } from '../lib/ai'
 import { frequentFoods, mealCalendar } from '../lib/prototypeData'
 
@@ -55,22 +55,6 @@ export default function DietScreen() {
       }
     })
   }
-  const editMealNote = (idx) => {
-    const meal = day.meals[idx]
-    const next = window.prompt('編輯餐點備註', meal?.note || '')
-    if (next === null) return
-    setCalendar(prev => {
-      const current = prev[selectedDay] || emptyDay
-      return {
-        ...prev,
-        [selectedDay]: {
-          ...current,
-          meals: current.meals.map((item, i) => i === idx ? { ...item, note: next } : item),
-        },
-      }
-    })
-  }
-
   return (
     <div className="screen-fade">
       <div style={{ padding: '8px 4px 4px' }}>
@@ -114,7 +98,6 @@ export default function DietScreen() {
             key={`${meal.name}-${idx}`}
             meal={meal}
             onDelete={() => deleteMeal(idx)}
-            onEdit={() => editMealNote(idx)}
           />
         ))}
       </div>
@@ -163,6 +146,7 @@ function AddMealSheet({ onClose, onAdd }) {
   const [custom, setCustom] = useState({ meal: '午餐', name: '', kcal: '', protein: '', carbs: '', fat: '' })
   const [photoFile, setPhotoFile] = useState(null)
   const [photoDescription, setPhotoDescription] = useState('')
+  const [photoPreview, setPhotoPreview] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState(null)
   const [analysisError, setAnalysisError] = useState('')
@@ -174,6 +158,15 @@ function AddMealSheet({ onClose, onAdd }) {
     carbs: Number(custom.carbs) || 0,
     fat: Number(custom.fat) || 0,
   }), [custom])
+  useEffect(() => {
+    if (!photoFile) {
+      setPhotoPreview('')
+      return undefined
+    }
+    const url = URL.createObjectURL(photoFile)
+    setPhotoPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [photoFile])
   const analyzePhoto = async () => {
     setAnalyzing(true)
     setAnalysisError('')
@@ -226,13 +219,25 @@ function AddMealSheet({ onClose, onAdd }) {
 
         {mode === 'manual' && (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <input className="inp" placeholder="餐別：早餐 / 午餐 / 晚餐 / 點心" value={custom.meal} onChange={e => setCustom({ ...custom, meal: e.target.value })} />
-            <input className="inp" placeholder="食物名稱" value={custom.name} onChange={e => setCustom({ ...custom, name: e.target.value })} />
+            <MealField label="餐別">
+              <input className="inp" placeholder="早餐 / 午餐 / 晚餐 / 點心" value={custom.meal} onChange={e => setCustom({ ...custom, meal: e.target.value })} />
+            </MealField>
+            <MealField label="食物名稱">
+              <input className="inp" placeholder="例如 雞胸飯" value={custom.name} onChange={e => setCustom({ ...custom, name: e.target.value })} />
+            </MealField>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-              <input className="inp" placeholder="熱量" type="number" value={custom.kcal} onChange={e => setCustom({ ...custom, kcal: e.target.value })} />
-              <input className="inp" placeholder="蛋白質" type="number" value={custom.protein} onChange={e => setCustom({ ...custom, protein: e.target.value })} />
-              <input className="inp" placeholder="碳水" type="number" value={custom.carbs} onChange={e => setCustom({ ...custom, carbs: e.target.value })} />
-              <input className="inp" placeholder="脂肪" type="number" value={custom.fat} onChange={e => setCustom({ ...custom, fat: e.target.value })} />
+              <MealField label="熱量" suffix="kcal">
+                <input className="inp" placeholder="例如 650" type="number" value={custom.kcal} onChange={e => setCustom({ ...custom, kcal: e.target.value })} />
+              </MealField>
+              <MealField label="蛋白質" suffix="g">
+                <input className="inp" placeholder="例如 45" type="number" value={custom.protein} onChange={e => setCustom({ ...custom, protein: e.target.value })} />
+              </MealField>
+              <MealField label="碳水" suffix="g">
+                <input className="inp" placeholder="例如 70" type="number" value={custom.carbs} onChange={e => setCustom({ ...custom, carbs: e.target.value })} />
+              </MealField>
+              <MealField label="脂肪" suffix="g">
+                <input className="inp" placeholder="例如 18" type="number" value={custom.fat} onChange={e => setCustom({ ...custom, fat: e.target.value })} />
+              </MealField>
             </div>
             <button className="btn-primary" disabled={!validCustom} onClick={() => onAdd(manualMeal)}>加入這一天</button>
           </div>
@@ -240,16 +245,37 @@ function AddMealSheet({ onClose, onAdd }) {
 
         {mode === 'photo' && (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <label className="card" style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, cursor: 'pointer' }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>CAM</div>
-              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{photoFile ? photoFile.name : '選擇或拍攝餐點照片'}</div>
-              <div style={{ fontSize: 13, marginTop: 6 }}>Gemini 會依照片辨識食物與估算營養</div>
+            <label className="card photo-picker" style={{
+              textAlign: 'center',
+              color: 'var(--ink-3)',
+              padding: photoPreview ? 0 : 24,
+              cursor: 'pointer',
+              minHeight: 168,
+              overflow: 'hidden',
+              display: 'grid',
+              placeItems: 'center',
+              background: photoPreview ? `center / cover no-repeat url(${photoPreview})` : '#fff',
+            }}>
+              {photoPreview ? (
+                <div style={{ alignSelf: 'end', width: '100%', padding: '44px 16px 14px', color: '#fff', background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.58))' }}>
+                  <div style={{ fontWeight: 900 }}>{photoFile?.name}</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontWeight: 900, color: 'var(--ink-1)', fontSize: 18 }}>加入照片</div>
+                  <div style={{ fontSize: 13, marginTop: 6 }}>AI 會依照片辨識食物與估算營養</div>
+                </div>
+              )}
               <input
                 type="file"
                 accept="image/*"
                 capture="environment"
                 style={{ display: 'none' }}
-                onChange={e => setPhotoFile(e.target.files?.[0] || null)}
+                onChange={e => {
+                  setPhotoFile(e.target.files?.[0] || null)
+                  setAnalysis(null)
+                  setAnalysisError('')
+                }}
               />
             </label>
             <textarea
@@ -260,7 +286,7 @@ function AddMealSheet({ onClose, onAdd }) {
               style={{ minHeight: 86, resize: 'none', lineHeight: 1.5 }}
             />
             <button className="btn-primary" disabled={analyzing || (!photoFile && !photoDescription.trim())} onClick={analyzePhoto}>
-              {analyzing ? 'AI 分析中...' : '用 Gemini 分析餐點'}
+              {analyzing ? 'AI 分析中...' : '用AI分析餐點'}
             </button>
             {analysisError && (
               <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{analysisError}</div>
@@ -282,21 +308,20 @@ function AddMealSheet({ onClose, onAdd }) {
   )
 }
 
-function SwipeMealCard({ meal, onDelete, onEdit }) {
+function SwipeMealCard({ meal, onDelete }) {
   const [x, setX] = useState(0)
   const [start, setStart] = useState(null)
   const onMove = (clientX) => {
     if (start === null) return
-    setX(Math.max(-156, Math.min(0, clientX - start)))
+    setX(Math.max(-78, Math.min(0, clientX - start)))
   }
   const end = () => {
-    setX(x < -54 ? -156 : 0)
+    setX(x < -36 ? -78 : 0)
     setStart(null)
   }
   return (
     <div className="swipe-row">
-      <div className="swipe-actions">
-        <button className="swipe-edit" onClick={onEdit}>備註</button>
+      <div className="swipe-actions meal-swipe-actions">
         <button className="swipe-delete" onClick={onDelete}>刪除</button>
       </div>
       <div
@@ -323,6 +348,18 @@ function SwipeMealCard({ meal, onDelete, onEdit }) {
         </div>
       </div>
     </div>
+  )
+}
+
+function MealField({ label, suffix, children }) {
+  return (
+    <label className="field-wrap">
+      <span className="field-label">{label}</span>
+      <span className="field-control">
+        {children}
+        {suffix && <span className="field-suffix">{suffix}</span>}
+      </span>
+    </label>
   )
 }
 

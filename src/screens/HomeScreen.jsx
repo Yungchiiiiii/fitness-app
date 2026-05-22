@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getSessions } from '../lib/db'
+import { deleteExercise, getSessions } from '../lib/db'
 import { ExercisePickerSheet, SetsFillerSheet } from '../components/NewSessionModal'
 import ProfileScreen from './ProfileScreen'
 import { demoSessions, macroSnapshot, muscleLoad, prHighlights } from '../lib/prototypeData'
@@ -44,6 +44,20 @@ export default function HomeScreen({ session }) {
   const deleteRecentDay = (date) => {
     setSessions(prev => prev.filter(session => session.date !== date))
     if (openDate === date) setOpenDate(null)
+  }
+  const removeRecentExercise = async (exercise) => {
+    const previous = sessions
+    setSessions(prev => prev
+      .map(item => item.id === exercise.sessionId
+        ? { ...item, session_exercises: (item.session_exercises || []).filter(ex => ex.id !== exercise.id) }
+        : item)
+      .filter(item => (item.session_exercises || []).length > 0))
+    if (prototypeOnly || String(exercise.id).startsWith('proto-')) return
+    const { error } = await deleteExercise(exercise.id)
+    if (error) {
+      setSessions(previous)
+      alert('刪除動作失敗：' + (error.message || '請稍後再試'))
+    }
   }
 
   return (
@@ -126,6 +140,7 @@ export default function HomeScreen({ session }) {
             onToggle={() => setOpenDate(openDate === day.date ? null : day.date)}
             onEdit={() => setOpenDate(day.date)}
             onDelete={() => deleteRecentDay(day.date)}
+            onRemoveExercise={removeRecentExercise}
           />
         ))}
       </div>
@@ -260,10 +275,11 @@ function MuscleRadar({ data }) {
   )
 }
 
-function RecentDayCard({ day, open, onToggle, onEdit, onDelete }) {
+function RecentDayCard({ day, open, onToggle, onEdit, onDelete, onRemoveExercise }) {
   const [swipeX, setSwipeX] = useState(0)
   const [startX, setStartX] = useState(null)
   const [openExercise, setOpenExercise] = useState(null)
+  const [editing, setEditing] = useState(false)
   const dateLabel = new Date(day.date + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
   const move = (clientX) => {
     if (startX === null) return
@@ -278,7 +294,7 @@ function RecentDayCard({ day, open, onToggle, onEdit, onDelete }) {
   return (
     <div className="swipe-row">
       <div className="swipe-actions">
-        <button className="swipe-edit" onClick={() => { onEdit(); setSwipeX(0) }}>編輯</button>
+        <button className="swipe-edit" onClick={() => { setEditing(true); onEdit(); setSwipeX(0) }}>編輯</button>
         <button className="swipe-delete" onClick={onDelete}>刪除</button>
       </div>
       <div
@@ -305,16 +321,32 @@ function RecentDayCard({ day, open, onToggle, onEdit, onDelete }) {
         </button>
         {open && (
           <div style={{ marginTop: 14, borderTop: '1px solid var(--line)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {editing && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 12, background: 'var(--bg-sunk)', color: 'var(--ink-3)', fontSize: 12, fontWeight: 800 }}>
+                <span>點選動作右側刪除即可移除單項運動</span>
+                <button onClick={() => setEditing(false)} style={{ color: 'var(--orange-d)', fontWeight: 900 }}>完成</button>
+              </div>
+            )}
             {day.exercises.map(ex => (
               <div key={ex.id}>
-                <button onClick={() => setOpenExercise(openExercise === ex.id ? null : ex.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left' }}>
-                  <ExerciseArt name={ex.name} small />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{ex.name}</div>
-                    <div style={{ color: 'var(--ink-3)', fontSize: 12 }}>{ex.exercise_sets?.length || 0} 組</div>
-                  </div>
-                  <span style={{ color: 'var(--ink-4)' }}>{openExercise === ex.id ? '收合' : '展開'}</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button onClick={() => setOpenExercise(openExercise === ex.id ? null : ex.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, textAlign: 'left' }}>
+                    <ExerciseArt name={ex.name} small />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{ex.name}</div>
+                      <div style={{ color: 'var(--ink-3)', fontSize: 12 }}>{ex.exercise_sets?.length || 0} 組</div>
+                    </div>
+                    <span style={{ color: 'var(--ink-4)' }}>{openExercise === ex.id ? '收合' : '展開'}</span>
+                  </button>
+                  {editing && (
+                    <button
+                      onClick={() => onRemoveExercise(ex)}
+                      style={{ width: 36, height: 36, borderRadius: 12, background: '#FEE2E2', color: '#DC2626', fontWeight: 900, flexShrink: 0 }}
+                    >
+                      刪
+                    </button>
+                  )}
+                </div>
                 {openExercise === ex.id && (
                   <div style={{ margin: '8px 0 0 48px', display: 'flex', flexDirection: 'column', gap: 5 }}>
                     {ex.exercise_sets?.map((set, i) => (
@@ -350,7 +382,12 @@ function ExerciseArt({ name, small = false }) {
 }
 
 function formatSet(set) {
-  if (set.duration_seconds) return `${Math.round(set.duration_seconds / 60)} 分 · ${set.weight ? `${set.weight}kg` : '自重'}`
+  if (set.duration_seconds) {
+    const minutes = `${Math.round(set.duration_seconds / 60)} 分`
+    if (set.unit === 'kmh' && set.weight) return `${minutes} · ${set.weight} 速度/等級`
+    if (set.weight) return `${minutes} · ${set.weight}kg`
+    return minutes
+  }
   return `${set.weight || 0}kg x ${set.reps || 0}`
 }
 
@@ -359,7 +396,7 @@ function groupRecentSessions(sessions) {
   const grouped = {}
   source.forEach(s => {
     if (!grouped[s.date]) grouped[s.date] = []
-    grouped[s.date].push(...(s.session_exercises || []))
+    grouped[s.date].push(...(s.session_exercises || []).map(ex => ({ ...ex, sessionId: s.id })))
   })
   return Object.entries(grouped)
     .sort(([a], [b]) => b.localeCompare(a))

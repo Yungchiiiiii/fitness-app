@@ -191,7 +191,10 @@ function GoalSheet({ goals, onClose, onSave }) {
               max="7"
               placeholder="最多 7"
               value={draft.trainingDays}
-              onChange={e => setDraft({ ...draft, trainingDays: e.target.value })}
+              onChange={e => {
+                const value = e.target.value
+                setDraft({ ...draft, trainingDays: value === '' ? '' : clampTrainingDays(value) })
+              }}
               onBlur={() => setDraft({ ...draft, trainingDays: clampTrainingDays(draft.trainingDays) })}
             />
           </Field>

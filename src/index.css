@@ -479,6 +479,10 @@ input  { font-family: inherit; }
   border-radius: 18px;
 }
 
+.meal-swipe-actions {
+  width: 78px;
+}
+
 .swipe-actions button {
   flex: 1;
   color: #fff;

@@ -19,9 +19,10 @@ export async function analyzeFoodWithGemini({ file, description }) {
   if (error) throw new Error(error.message || 'Gemini 分析失敗')
   const parsed = data?.meal
   if (!parsed) throw new Error('AI 沒有回傳餐點分析')
+  if (parsed.isFood === false) throw new Error(parsed.note || 'AI 沒有在照片中辨識到餐點，請換一張食物照片或補充描述。')
   return {
-    meal: parsed.meal || '餐點',
-    name: parsed.name || 'AI 辨識餐點',
+    meal: parsed.meal || '點心',
+    name: parsed.name || '未命名餐點',
     kcal: Number(parsed.kcal) || 0,
     protein: Number(parsed.protein) || 0,
     carbs: Number(parsed.carbs) || 0,

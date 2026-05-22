@@ -44,7 +44,8 @@ async function analyzeFood(body: FoodAnalysisRequest) {
     text: `你是營養分析助手。根據照片與使用者描述估算餐點營養。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
-{"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
+{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
+如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。
 使用者描述：${body.description || '無'}`,
   }]
 
@@ -58,14 +59,16 @@ async function analyzeFood(body: FoodAnalysisRequest) {
   }
 
   const parsed = parseJson(await callGemini(parts))
+  const isFood = parsed.isFood !== false
   return {
-    meal: parsed.meal || '餐點',
-    name: parsed.name || 'AI 辨識餐點',
-    kcal: Number(parsed.kcal) || 0,
-    protein: Number(parsed.protein) || 0,
-    carbs: Number(parsed.carbs) || 0,
-    fat: Number(parsed.fat) || 0,
-    note: parsed.note || '由 AI 依照片與描述估算。',
+    isFood,
+    meal: parsed.meal || '點心',
+    name: parsed.name || (isFood ? '未命名餐點' : '無餐點'),
+    kcal: isFood ? Number(parsed.kcal) || 0 : 0,
+    protein: isFood ? Number(parsed.protein) || 0 : 0,
+    carbs: isFood ? Number(parsed.carbs) || 0 : 0,
+    fat: isFood ? Number(parsed.fat) || 0 : 0,
+    note: parsed.note || (isFood ? '由 AI 依照片與描述估算。' : '沒有辨識到可記錄的餐點。'),
   }
 }
 
@@ -104,7 +107,8 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
       text: `請分析這份餐點。使用者補充描述：${description || '無'}。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
-{"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}`,
+{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
+如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。`,
     },
   ]
 
@@ -125,14 +129,16 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
     { role: 'user', content },
   ], body.image?.data ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
   const parsed = parseJson(text)
+  const isFood = parsed.isFood !== false
   return {
-    meal: parsed.meal || '餐點',
-    name: parsed.name || 'AI 估算餐點',
-    kcal: Number(parsed.kcal) || 0,
-    protein: Number(parsed.protein) || 0,
-    carbs: Number(parsed.carbs) || 0,
-    fat: Number(parsed.fat) || 0,
-    note: parsed.note || '由 AI 依文字描述估算。',
+    isFood,
+    meal: parsed.meal || '點心',
+    name: parsed.name || (isFood ? '未命名餐點' : '無餐點'),
+    kcal: isFood ? Number(parsed.kcal) || 0 : 0,
+    protein: isFood ? Number(parsed.protein) || 0 : 0,
+    carbs: isFood ? Number(parsed.carbs) || 0 : 0,
+    fat: isFood ? Number(parsed.fat) || 0 : 0,
+    note: parsed.note || (isFood ? '由 AI 依文字描述估算。' : '沒有辨識到可記錄的餐點。'),
   }
 }
 
