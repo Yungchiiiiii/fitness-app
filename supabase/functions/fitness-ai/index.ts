@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -25,15 +27,55 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const { client, user } = await requireUser(req)
     const body = await req.json() as FoodAnalysisRequest | CoachChatRequest
 
-    if (body.task === 'food-analysis') return json({ meal: await analyzeFood(body) })
-    if (body.task === 'coach-chat') return json({ reply: await coachReply(body) })
+    if (body.task === 'food-analysis') {
+      const meal = await analyzeFood(body)
+      await logAiEvent(client, user.id, 'food-analysis', {
+        description: body.description?.slice(0, 1000) || '',
+        hasImage: Boolean(body.image?.data),
+        mimeType: body.image?.mimeType || null,
+      }, meal)
+      return json({ meal })
+    }
+    if (body.task === 'coach-chat') {
+      const reply = await coachReply(body)
+      await logAiEvent(client, user.id, 'coach-chat', {
+        prompt: body.prompt?.slice(0, 4000) || '',
+        context: body.context || {},
+      }, { reply: reply.slice(0, 6000) })
+      return json({ reply })
+    }
     return json({ error: 'Unknown task' }, 400)
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : 'Unknown error' }, 500)
+    const status = error instanceof HttpError ? error.status : 500
+    return json({ error: error instanceof Error ? error.message : 'Unknown error' }, status)
   }
 })
+
+async function requireUser(req: Request) {
+  const authorization = req.headers.get('Authorization')
+  if (!authorization?.startsWith('Bearer ')) throw new HttpError('需要登入才能使用 AI 功能。', 401)
+  const url = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('SUPABASE_PUBLISHABLE_KEY')
+  if (!url || !key) throw new Error('Server missing Supabase function configuration')
+  const client = createClient(url, key, { global: { headers: { Authorization: authorization } } })
+  const { data, error } = await client.auth.getUser(authorization.slice('Bearer '.length))
+  if (error || !data.user) throw new HttpError('登入狀態已失效，請重新登入。', 401)
+  return { client, user: data.user }
+}
+
+async function logAiEvent(client: ReturnType<typeof createClient>, userId: string, kind: string, input: unknown, output: unknown) {
+  const { error } = await client.from('ai_events').insert({ user_id: userId, kind, input, output })
+  if (error) console.error('Could not log AI event:', error.message)
+}
+
+class HttpError extends Error {
+  constructor(message: string, public status: number) {
+    super(message)
+  }
+}
 
 async function analyzeFood(body: FoodAnalysisRequest) {
   if (groqKey) {

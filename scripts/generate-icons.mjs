@@ -6,13 +6,12 @@ const outDir = path.resolve('public')
 fs.mkdirSync(outDir, { recursive: true })
 
 const palette = {
-  cream: [255, 247, 235, 255],
-  shadow: [226, 95, 24, 55],
-  orange: [255, 122, 30, 255],
-  orangeDark: [226, 88, 19, 255],
-  green: [46, 184, 117, 255],
-  navy: [28, 42, 67, 255],
   white: [255, 255, 255, 255],
+  ink: [38, 54, 79, 255],
+  coral: [225, 116, 103, 255],
+  mint: [130, 186, 170, 255],
+  blush: [250, 221, 210, 255],
+  shadow: [38, 54, 79, 28],
 }
 
 function blend(dst, src, a) {
@@ -28,19 +27,6 @@ function roundedRect(x, y, w, h, r) {
     const cx = Math.max(x + r, Math.min(px, x + w - r))
     const cy = Math.max(y + r, Math.min(py, y + h - r))
     return (px - cx) ** 2 + (py - cy) ** 2 <= r ** 2
-  }
-}
-
-function polygon(points) {
-  return (px, py) => {
-    let inside = false
-    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-      const [xi, yi] = points[i]
-      const [xj, yj] = points[j]
-      const cross = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi
-      if (cross) inside = !inside
-    }
-    return inside
   }
 }
 
@@ -61,7 +47,7 @@ function capsule(x1, y1, x2, y2, r) {
 }
 
 function union(...shapes) {
-  return (x, y) => shapes.some((shape) => shape(x, y))
+  return (x, y) => shapes.some(shape => shape(x, y))
 }
 
 function draw(buffer, size, shape, color, samples = 4) {
@@ -84,36 +70,40 @@ function draw(buffer, size, shape, color, samples = 4) {
 
 function makeIcon(size) {
   const scale = size / 512
-  const s = (n) => n * scale
+  const s = n => n * scale
   const buffer = Buffer.alloc(size * size * 4, 0)
 
-  draw(buffer, size, roundedRect(0, 0, size, size, s(112)), palette.cream)
-  draw(buffer, size, ellipse(s(260), s(390), s(152), s(36)), palette.shadow)
+  draw(buffer, size, roundedRect(0, 0, size, size, s(112)), palette.white)
+  draw(buffer, size, ellipse(s(256), s(470), s(135), s(18)), palette.shadow)
+  draw(buffer, size, ellipse(s(256), s(318), s(132), s(118)), palette.blush, 3)
 
-  const flame = union(
-    polygon([[s(256), s(72)], [s(365), s(242)], [s(318), s(396)], [s(210), s(421)], [s(145), s(309)], [s(186), s(182)]]),
-    ellipse(s(254), s(295), s(112), s(136)),
-    ellipse(s(205), s(268), s(62), s(88)),
-    ellipse(s(310), s(250), s(58), s(102))
-  )
-  draw(buffer, size, flame, palette.orange)
+  // Dumbbell outline.
+  draw(buffer, size, capsule(s(126), s(146), s(386), s(146), s(10)), palette.ink)
+  draw(buffer, size, capsule(s(126), s(146), s(386), s(146), s(3.5)), palette.white)
+  for (const [x, width, height] of [[82, 32, 100], [112, 23, 78], [398, 32, 100], [377, 23, 78]]) {
+    draw(buffer, size, roundedRect(s(x), s(96 + (100 - height) / 2), s(width), s(height), s(10)), palette.ink)
+    draw(buffer, size, roundedRect(s(x + 8), s(104 + (100 - height) / 2), s(width - 16), s(height - 16), s(5)), palette.white)
+  }
 
-  const innerFlame = union(
-    polygon([[s(260), s(158)], [s(318), s(272)], [s(283), s(362)], [s(223), s(373)], [s(192), s(301)], [s(226), s(222)]]),
-    ellipse(s(255), s(304), s(58), s(82))
-  )
-  draw(buffer, size, innerFlame, palette.orangeDark)
+  // Cute line-art person lifting the bar.
+  draw(buffer, size, ellipse(s(256), s(274), s(39), s(39)), palette.ink)
+  draw(buffer, size, ellipse(s(256), s(274), s(31), s(31)), palette.white)
+  draw(buffer, size, ellipse(s(242), s(273), s(4), s(5)), palette.ink, 3)
+  draw(buffer, size, ellipse(s(270), s(273), s(4), s(5)), palette.ink, 3)
+  draw(buffer, size, capsule(s(248), s(290), s(264), s(290), s(2.5)), palette.coral, 3)
+  draw(buffer, size, ellipse(s(231), s(286), s(7), s(4)), palette.coral, 3)
+  draw(buffer, size, ellipse(s(281), s(286), s(7), s(4)), palette.coral, 3)
 
-  draw(buffer, size, capsule(s(180), s(330), s(246), s(390), s(22)), palette.white)
-  draw(buffer, size, capsule(s(240), s(389), s(354), s(236), s(22)), palette.white)
-  draw(buffer, size, capsule(s(188), s(329), s(246), s(382), s(12)), palette.green)
-  draw(buffer, size, capsule(s(246), s(382), s(345), s(249), s(12)), palette.green)
-
-  draw(buffer, size, capsule(s(150), s(204), s(348), s(204), s(14)), palette.navy)
-  draw(buffer, size, capsule(s(147), s(178), s(147), s(230), s(16)), palette.navy)
-  draw(buffer, size, capsule(s(365), s(178), s(365), s(230), s(16)), palette.navy)
-  draw(buffer, size, capsule(s(117), s(188), s(117), s(220), s(18)), palette.navy)
-  draw(buffer, size, capsule(s(395), s(188), s(395), s(220), s(18)), palette.navy)
+  draw(buffer, size, capsule(s(232), s(340), s(177), s(167), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(280), s(340), s(335), s(167), s(9)), palette.ink)
+  draw(buffer, size, ellipse(s(174), s(161), s(13), s(13)), palette.mint)
+  draw(buffer, size, ellipse(s(338), s(161), s(13), s(13)), palette.mint)
+  draw(buffer, size, capsule(s(256), s(320), s(256), s(399), s(10)), palette.ink)
+  draw(buffer, size, capsule(s(256), s(333), s(256), s(389), s(5)), palette.mint)
+  draw(buffer, size, capsule(s(256), s(397), s(215), s(458), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(256), s(397), s(297), s(458), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(208), s(461), s(185), s(461), s(8)), palette.ink)
+  draw(buffer, size, capsule(s(304), s(461), s(327), s(461), s(8)), palette.ink)
 
   return buffer
 }
@@ -158,10 +148,6 @@ function png(width, height, rgba) {
   ])
 }
 
-for (const [name, size] of [
-  ['icon-192.png', 192],
-  ['icon-512.png', 512],
-  ['apple-touch-icon.png', 180],
-]) {
+for (const [name, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['apple-touch-icon.png', 180]]) {
   fs.writeFileSync(path.join(outDir, name), png(size, size, makeIcon(size)))
 }

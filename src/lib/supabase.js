@@ -1,6 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL = 'https://bntyklhzencxcreqpapy.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJudHlrbGh6ZW5jeGNyZXFwYXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkyOTA2NzQsImV4cCI6MjA5NDg2NjY3NH0.x0bga658avJ97ioPocqPFjLnfwq5djWiIJjFDKGShCQ'
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_KEY)
+
+// Keep demo/build environments importable without allowing accidental network calls.
+export const supabase = createClient(
+  SUPABASE_URL || 'https://example.invalid',
+  SUPABASE_KEY || 'missing-supabase-key',
+  { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } },
+)

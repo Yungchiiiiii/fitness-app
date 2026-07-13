@@ -1,15 +1,45 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { askCoachWithAI } from '../lib/ai'
+import { getDailyNutrition, getFoodLogs, getProfile, getRecoveryLogs, getSessions, getWeightLogs } from '../lib/db'
 import { aiSuggestions, demoSessions, macroSnapshot, mealCalendar, painLogs, weightLogs } from '../lib/prototypeData'
 
 const quickPrompts = ['今天肩膀不舒服，怎麼練胸？', '最近力量有點掉，飲食要調嗎？', '幫我排明天 45 分鐘訓練']
 
-export default function CoachScreen() {
+export default function CoachScreen({ session }) {
+  const prototypeOnly = !!session?.prototype
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([
     { role: 'coach', text: '我看了你的訓練、飲食和恢復狀態。今天可以保留訓練節奏，但肩部推舉先降壓力。' },
   ])
   const [thinking, setThinking] = useState(false)
+  const [contextData, setContextData] = useState(() => buildCoachContext())
+
+  useEffect(() => {
+    if (prototypeOnly || !session?.user?.id) return undefined
+    const today = new Date().toISOString().split('T')[0]
+    let cancelled = false
+    Promise.all([
+      getSessions(session.user.id),
+      getDailyNutrition(session.user.id, today, today),
+      getFoodLogs(session.user.id, today),
+      getWeightLogs(session.user.id),
+      getRecoveryLogs(session.user.id),
+      getProfile(session.user.id),
+    ]).then(([sessionsResult, nutritionResult, mealsResult, weightsResult, recoveryResult, profileResult]) => {
+      if (cancelled) return
+      setContextData(buildBackendCoachContext({
+        sessions: sessionsResult.data || [],
+        nutrition: nutritionResult.data?.[0],
+        meals: mealsResult.data || [],
+        weights: weightsResult.data || [],
+        recovery: recoveryResult.data || [],
+        profile: profileResult.data || {},
+      }))
+    })
+    return () => { cancelled = true }
+  }, [prototypeOnly, session?.user?.id])
+
+  const context = contextData || buildCoachContext()
 
   const ask = async (prompt = text) => {
     const clean = prompt.trim()
@@ -18,7 +48,7 @@ export default function CoachScreen() {
     setText('')
     setThinking(true)
     try {
-      const reply = await askCoachWithAI({ prompt: clean, context: buildCoachContext() })
+      const reply = await askCoachWithAI({ prompt: clean, context })
       setMessages(prev => [...prev, { role: 'coach', text: reply }])
     } catch (error) {
       setMessages(prev => [...prev, { role: 'coach', text: buildReply(clean, error.message) }])
@@ -55,12 +85,12 @@ export default function CoachScreen() {
         ))}
       </div>
 
-      <div className="section-title">讀取中的模擬資料</div>
+      <div className="section-title">{prototypeOnly ? '讀取中的模擬資料' : '讀取中的雲端資料'}</div>
       <div className="card" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <ContextChip label="不適標記" value={`${painLogs[0].bodyPart} ${painLogs[0].intensity}/10`} tone="red" />
-        <ContextChip label="蛋白質" value={`${macroSnapshot.protein.value}/${macroSnapshot.protein.target}g`} tone="orange" />
-        <ContextChip label="體重趨勢" value={`${weightLogs[0].weight} -> ${weightLogs.at(-1).weight}kg`} tone="green" />
-        <ContextChip label="訓練策略" value="降低肩壓力" tone="amber" />
+        <ContextChip label="不適標記" value={context.painLogs[0] ? `${context.painLogs[0].bodyPart || context.painLogs[0].body_part} ${context.painLogs[0].intensity}/10` : '目前沒有'} tone="red" />
+        <ContextChip label="蛋白質" value={`${context.macroSnapshot.protein.value}/${context.macroSnapshot.protein.target}g`} tone="orange" />
+        <ContextChip label="體重趨勢" value={context.weightTrend.start ? `${context.weightTrend.start.weight} -> ${context.weightTrend.latest.weight}kg` : '尚無紀錄'} tone="green" />
+        <ContextChip label="訓練策略" value={context.painLogs.length ? '依不適調整' : '維持漸進'} tone="amber" />
       </div>
 
       <div className="section-title">對話</div>
@@ -144,6 +174,38 @@ function buildCoachContext() {
       exercises: s.session_exercises.map(ex => ({ name: ex.name, note: ex.note, sets: ex.exercise_sets.length })),
     })),
     todayMeals: mealCalendar[21],
+  }
+}
+
+function buildBackendCoachContext({ sessions, nutrition, meals, weights, recovery, profile }) {
+  const value = (key) => Number(nutrition?.[key]) || 0
+  const target = (key, fallback) => Number(profile?.[key]) || fallback
+  return {
+    macroSnapshot: {
+      calories: { value: value('calories'), target: target('calories_target', 2200) },
+      protein: { value: value('protein'), target: target('protein_target', 110) },
+      carbs: { value: value('carbs'), target: target('carbs_target', 285) },
+      fat: { value: value('fat'), target: target('fat_target', 65) },
+    },
+    painLogs: recovery,
+    weightTrend: { start: weights[0] || null, latest: weights.at(-1) || null },
+    recentTraining: sessions.slice(0, 6).map(s => ({
+      date: s.date,
+      name: s.name,
+      exercises: (s.session_exercises || []).map(ex => ({
+        name: ex.name,
+        note: ex.note,
+        sets: ex.exercise_sets?.length || 0,
+      })),
+    })),
+    todayMeals: meals.map(meal => ({
+      meal: meal.meal,
+      name: meal.name,
+      kcal: meal.kcal,
+      protein: meal.protein,
+      carbs: meal.carbs,
+      fat: meal.fat,
+    })),
   }
 }
 

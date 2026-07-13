@@ -1,14 +1,42 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { getExerciseProgress } from '../lib/db'
 import { exerciseCategories, exerciseProgress } from '../lib/prototypeData'
 
 const defaultCategory = exerciseCategories[1]
 
-export default function TrainingScreen() {
+export default function TrainingScreen({ session }) {
+  const prototypeOnly = !!session?.prototype
   const [selected, setSelected] = useState('深蹲')
   const [showPicker, setShowPicker] = useState(false)
   const [category, setCategory] = useState(defaultCategory.id)
-  const history = exerciseProgress[selected]
+  const [backendHistory, setBackendHistory] = useState([])
+  const [loading, setLoading] = useState(!prototypeOnly)
   const isCardioOrCore = selected === '跑步' || selected === '平板支撐'
+  const history = useMemo(() => {
+    if (prototypeOnly) return exerciseProgress[selected] || []
+    return backendHistory.map(row => ({
+      date: new Date(`${row.date}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }),
+      best: isCardioOrCore
+        ? Math.round((row.total_duration_seconds || 0) / (selected === '跑步' ? 60 : 1))
+        : Number(row.best_weight) || 0,
+      oneRm: Number(row.best_estimated_1rm) || null,
+      sets: `${row.total_sets || 0} 組 · ${row.total_reps || 0} 次`,
+      note: row.total_volume ? `總訓練量 ${row.total_volume}kg` : '已完成這次紀錄',
+    }))
+  }, [backendHistory, isCardioOrCore, prototypeOnly, selected])
+
+  useEffect(() => {
+    if (prototypeOnly || !session?.user?.id) return undefined
+    let cancelled = false
+    setLoading(true)
+    getExerciseProgress(session.user.id, selected).then(({ data }) => {
+      if (!cancelled) {
+        setBackendHistory(data || [])
+        setLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [session?.user?.id, selected, prototypeOnly])
 
   return (
     <div className="screen-fade">
@@ -32,16 +60,18 @@ export default function TrainingScreen() {
           <div>
             <div className="section-title" style={{ margin: 0 }}>{selected} {isCardioOrCore ? '表現趨勢' : '重量趨勢'}</div>
             <div className="display" style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-1)', marginTop: 6 }}>
-              {history.at(-1).best}{isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'}
+              {history.at(-1)?.best || 0}{isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'}
             </div>
           </div>
           {!isCardioOrCore && (
             <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>
-              est. 1RM {history.at(-1).oneRm}kg
+              est. 1RM {history.at(-1)?.oneRm || 0}kg
             </span>
           )}
         </div>
-        <ProgressLine data={history} unit={isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'} />
+        {loading && <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 10 }}>正在讀取雲端進步紀錄...</div>}
+        {!loading && !history.length && <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 10 }}>還沒有這個動作的紀錄，完成一次訓練後就會出現在這裡。</div>}
+        {history.length > 0 && <ProgressLine data={history} unit={isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'} />}
       </div>
 
       <div className="section-title">每次紀錄</div>
