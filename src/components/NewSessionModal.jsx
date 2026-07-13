@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createSession, createExercise, createSet } from '../lib/db'
+import { createSession, createExercise, createRecoveryLog, createSet } from '../lib/db'
 import { supabase } from '../lib/supabase'
 
 export const EXERCISE_LIBRARY = {
@@ -235,6 +235,7 @@ export function SetsFillerSheet({ selected, date, sessions, prototypeOnly = fals
         const { data: ex, error: e2 } = await createExercise({
           session_id: sess.id, name: exName, category, order_index: i,
           note: notes[exName] || null,
+          pain_intensity: painMarks[exName] ? 4 : null,
         })
         if (e2) throw new Error(`新增動作失敗: ${e2.message}`)
 
@@ -257,6 +258,17 @@ export function SetsFillerSheet({ selected, date, sessions, prototypeOnly = fals
           }
           const { error: e3 } = await createSet(payload)
           if (e3) throw new Error(`新增組數失敗: ${e3.message}`)
+        }
+
+        if (painMarks[exName]) {
+          const { error: recoveryError } = await createRecoveryLog({
+            user_id: user.id,
+            date,
+            body_part: exName,
+            intensity: 4,
+            note: '訓練中標記不適，請觀察下一次訓練前後狀態。',
+          })
+          if (recoveryError) throw new Error(`儲存恢復紀錄失敗: ${recoveryError.message}`)
         }
       }
       onSaved()

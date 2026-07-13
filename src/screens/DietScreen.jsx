@@ -1,55 +1,103 @@
 import { useEffect, useMemo, useState } from 'react'
 import { analyzeFoodWithGemini } from '../lib/ai'
+import { createFoodLog, deleteFoodLog, getFoodLogsRange } from '../lib/db'
 import { frequentFoods, mealCalendar } from '../lib/prototypeData'
 
-const todayDay = 21
+const today = new Date()
+const todayDay = today.getDate()
+const currentYear = today.getFullYear()
+const currentMonth = today.getMonth()
+const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
+const dateForDay = day => `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
-export default function DietScreen() {
+export default function DietScreen({ session }) {
+  const prototypeOnly = !!session?.prototype
   const [selectedDay, setSelectedDay] = useState(todayDay)
   const [showAdd, setShowAdd] = useState(false)
-  const [calendar, setCalendar] = useState(mealCalendar)
+  const [calendar, setCalendar] = useState(prototypeOnly ? mealCalendar : {})
+  const [loading, setLoading] = useState(!prototypeOnly)
+  const [error, setError] = useState('')
   const day = calendar[selectedDay] || emptyDay
 
-  const addMeal = (meal) => {
+  const reload = async () => {
+    if (prototypeOnly || !session?.user?.id) return
+    setLoading(true)
+    setError('')
+    const from = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`
+    const to = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${daysInMonth}`
+    const { data, error: loadError } = await getFoodLogsRange(session.user.id, from, to)
+    if (loadError) setError(`讀取飲食紀錄失敗：${loadError.message}`)
+    else setCalendar(groupFoodLogs(data || []))
+    setLoading(false)
+  }
+
+  useEffect(() => { reload() }, [session?.user?.id, prototypeOnly])
+
+  const addMeal = async (meal) => {
+    const normalized = normalizeMeal(meal)
+    if (!prototypeOnly) {
+      const { error: saveError } = await createFoodLog({
+        user_id: session.user.id,
+        date: dateForDay(selectedDay),
+        meal: normalized.name,
+        name: normalized.food,
+        kcal: normalized.kcal,
+        protein: normalized.protein,
+        carbs: normalized.carbs,
+        fat: normalized.fat,
+        note: normalized.note || null,
+        source: meal.source || 'manual',
+      })
+      if (saveError) {
+        setError(`儲存餐點失敗：${saveError.message}`)
+        return
+      }
+      await reload()
+      setShowAdd(false)
+      return
+    }
+
     setCalendar(prev => {
       const current = prev[selectedDay] || emptyDay
       return {
         ...prev,
         [selectedDay]: {
           ...current,
-          calories: current.calories + meal.kcal,
-          protein: current.protein + meal.protein,
-          carbs: current.carbs + (meal.carbs || 0),
-          fat: current.fat + (meal.fat || 0),
-          meals: [...current.meals, {
-            name: meal.meal,
-            food: meal.name,
-            protein: meal.protein,
-            kcal: meal.kcal,
-            carbs: meal.carbs || 0,
-            fat: meal.fat || 0,
-            note: meal.note || '',
-          }],
+          calories: current.calories + normalized.kcal,
+          protein: current.protein + normalized.protein,
+          carbs: current.carbs + normalized.carbs,
+          fat: current.fat + normalized.fat,
+          meals: [...current.meals, normalized],
           advice: '已加入新餐點；晚點 AI 可依整天總量再微調建議。',
         },
       }
     })
     setShowAdd(false)
   }
-  const deleteMeal = (idx) => {
+  const deleteMeal = async (idx) => {
+    const current = calendar[selectedDay] || emptyDay
+    const meal = current.meals[idx]
+    if (!meal) return
+    if (!prototypeOnly && meal.id) {
+      const { error: deleteError } = await deleteFoodLog(meal.id)
+      if (deleteError) {
+        setError(`刪除餐點失敗：${deleteError.message}`)
+        return
+      }
+      await reload()
+      return
+    }
     setCalendar(prev => {
-      const current = prev[selectedDay] || emptyDay
-      const meal = current.meals[idx]
-      if (!meal) return prev
+      const currentDay = prev[selectedDay] || emptyDay
       return {
         ...prev,
         [selectedDay]: {
-          ...current,
-          calories: Math.max(0, current.calories - (meal.kcal || 0)),
-          protein: Math.max(0, current.protein - (meal.protein || 0)),
-          carbs: Math.max(0, current.carbs - (meal.carbs || 0)),
-          fat: Math.max(0, current.fat - (meal.fat || 0)),
-          meals: current.meals.filter((_, i) => i !== idx),
+          ...currentDay,
+          calories: Math.max(0, currentDay.calories - (meal.kcal || 0)),
+          protein: Math.max(0, currentDay.protein - (meal.protein || 0)),
+          carbs: Math.max(0, currentDay.carbs - (meal.carbs || 0)),
+          fat: Math.max(0, currentDay.fat - (meal.fat || 0)),
+          meals: currentDay.meals.filter((_, i) => i !== idx),
           advice: '已更新餐點紀錄；AI 建議會依新的總量重新判讀。',
         },
       }
@@ -65,18 +113,18 @@ export default function DietScreen() {
       <div className="card" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <div>
-            <div className="section-title" style={{ margin: 0 }}>5 月飲食追蹤</div>
+            <div className="section-title" style={{ margin: 0 }}>{currentMonth + 1} 月飲食追蹤</div>
             <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>點日期查看當天紀錄</div>
           </div>
           <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>{selectedDay} 日</span>
         </div>
-        <CalendarGrid selectedDay={selectedDay} onSelect={setSelectedDay} data={calendar} />
+        <CalendarGrid selectedDay={selectedDay} onSelect={setSelectedDay} data={calendar} daysInMonth={daysInMonth} />
       </div>
 
       <div className="card" style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <div>
-            <div className="section-title" style={{ margin: 0 }}>{selectedDay === todayDay ? '今日熱量' : `5/${selectedDay} 熱量`}</div>
+            <div className="section-title" style={{ margin: 0 }}>{selectedDay === todayDay ? '今日熱量' : `${currentMonth + 1}/${selectedDay} 熱量`}</div>
             <div className="display" style={{ fontSize: 34, fontWeight: 900, color: 'var(--ink-1)', marginTop: 6 }}>{day.calories}</div>
           </div>
           <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>/ 2450 kcal</span>
@@ -92,6 +140,8 @@ export default function DietScreen() {
       </div>
 
       <div className="section-title">當日飲食</div>
+      {loading && <div className="card" style={{ color: 'var(--ink-3)', fontSize: 13 }}>正在讀取雲端紀錄...</div>}
+      {error && <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{error}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {day.meals.map((meal, idx) => (
           <SwipeMealCard
@@ -104,7 +154,7 @@ export default function DietScreen() {
 
       <button className="cta-card" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}>
         <div style={{ textAlign: 'left' }}>
-          <div style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12, fontWeight: 800 }}>新增到 5/{selectedDay}</div>
+          <div style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12, fontWeight: 800 }}>新增到 {currentMonth + 1}/{selectedDay}</div>
           <div className="display" style={{ color: '#fff', fontSize: 19, fontWeight: 900, marginTop: 2 }}>新增一餐 / 拍照辨識</div>
         </div>
         <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(255,255,255,0.22)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 900 }}>+</div>
@@ -115,8 +165,8 @@ export default function DietScreen() {
   )
 }
 
-function CalendarGrid({ selectedDay, onSelect, data }) {
-  const days = Array.from({ length: 31 }, (_, i) => i + 1)
+function CalendarGrid({ selectedDay, onSelect, data, daysInMonth: monthDays }) {
+  const days = Array.from({ length: monthDays }, (_, i) => i + 1)
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 8 }}>
       {days.map(day => {
@@ -139,6 +189,37 @@ function CalendarGrid({ selectedDay, onSelect, data }) {
       })}
     </div>
   )
+}
+
+function normalizeMeal(meal) {
+  return {
+    id: meal.id,
+    name: meal.meal || '點心',
+    food: meal.name || '未命名餐點',
+    protein: Number(meal.protein) || 0,
+    kcal: Number(meal.kcal) || 0,
+    carbs: Number(meal.carbs) || 0,
+    fat: Number(meal.fat) || 0,
+    note: meal.note || '',
+  }
+}
+
+function groupFoodLogs(logs) {
+  return logs.reduce((result, log) => {
+    const day = Number(String(log.date).slice(-2))
+    const current = result[day] || { ...emptyDay, meals: [] }
+    const meal = normalizeMeal(log)
+    result[day] = {
+      ...current,
+      calories: current.calories + meal.kcal,
+      protein: current.protein + meal.protein,
+      carbs: current.carbs + meal.carbs,
+      fat: current.fat + meal.fat,
+      meals: [...current.meals, meal],
+      advice: '已整理雲端餐點紀錄；AI 可依當天總量再提供建議。',
+    }
+    return result
+  }, {})
 }
 
 function AddMealSheet({ onClose, onAdd }) {
@@ -208,7 +289,7 @@ function AddMealSheet({ onClose, onAdd }) {
         {mode === 'quick' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 16 }}>
             {frequentFoods.map(food => (
-              <button key={food.name} onClick={() => onAdd(food)} className="card" style={{ padding: 13, textAlign: 'left' }}>
+              <button key={food.name} onClick={() => onAdd({ ...food, source: 'quick' })} className="card" style={{ padding: 13, textAlign: 'left' }}>
                 <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{food.name}</div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 4 }}>{food.meal} · {food.kcal} kcal</div>
                 <div style={{ color: 'var(--orange-d)', fontSize: 12, fontWeight: 900, marginTop: 5 }}>P {food.protein}g</div>
@@ -239,7 +320,7 @@ function AddMealSheet({ onClose, onAdd }) {
                 <input className="inp" placeholder="例如 18" type="number" value={custom.fat} onChange={e => setCustom({ ...custom, fat: e.target.value })} />
               </MealField>
             </div>
-            <button className="btn-primary" disabled={!validCustom} onClick={() => onAdd(manualMeal)}>加入這一天</button>
+            <button className="btn-primary" disabled={!validCustom} onClick={() => onAdd({ ...manualMeal, source: 'manual' })}>加入這一天</button>
           </div>
         )}
 
@@ -298,12 +379,12 @@ function AddMealSheet({ onClose, onAdd }) {
                   {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
                 </div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
-                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd(analysis)}>加入這一天</button>
+                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, source: 'ai' })}>加入這一天</button>
               </div>
             )}
           </div>
         )}
-      </div>
+    </div>
     </div>
   )
 }

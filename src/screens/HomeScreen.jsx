@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { deleteExercise, getSessions } from '../lib/db'
+import { deleteExercise, deleteSession, getDailyNutrition, getProfile, getSessions } from '../lib/db'
 import { ExercisePickerSheet, SetsFillerSheet } from '../components/NewSessionModal'
 import ProfileScreen from './ProfileScreen'
 import { demoSessions, macroSnapshot, muscleLoad, prHighlights } from '../lib/prototypeData'
@@ -17,6 +17,9 @@ export default function HomeScreen({ session }) {
   const [showProfile, setShowProfile] = useState(false)
   const [openDate, setOpenDate] = useState(null)
   const [targetDays, setTargetDays] = useState(() => getSavedTargetDays())
+  const [nutrition, setNutrition] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const todayStr = today.toISOString().split('T')[0]
 
   useEffect(() => {
     if (prototypeOnly) {
@@ -24,7 +27,14 @@ export default function HomeScreen({ session }) {
       return
     }
     getSessions(session.user.id).then(({ data }) => setSessions(data || []))
-  }, [prototypeOnly, session.user.id])
+    Promise.all([
+      getDailyNutrition(session.user.id, todayStr, todayStr),
+      getProfile(session.user.id),
+    ]).then(([nutritionResult, profileResult]) => {
+      setNutrition(nutritionResult.data?.[0] || null)
+      setProfile(profileResult.data || null)
+    })
+  }, [prototypeOnly, session.user.id, todayStr])
   useEffect(() => {
     const syncGoals = (event) => setTargetDays(clampTargetDays(event.detail?.trainingDays || getSavedTargetDays()))
     window.addEventListener('fitness-goals-updated', syncGoals)
@@ -35,15 +45,25 @@ export default function HomeScreen({ session }) {
     if (prototypeOnly) return
     getSessions(session.user.id).then(({ data }) => setSessions(data || []))
   }
-  const todayStr = today.toISOString().split('T')[0]
   const trainedToday = new Set(sessions.map(s => s.date)).has(todayStr)
-  const trainedWeekDays = Math.max(new Set(sessions.slice(0, 7).map(s => s.date)).size, 3)
+  const trainedWeekDays = prototypeOnly ? Math.max(new Set(sessions.slice(0, 7).map(s => s.date)).size, 3) : new Set(sessions.filter(s => s.date >= todayStr.slice(0, 8) + '01').map(s => s.date)).size
   const weekProgress = Math.min(trainedWeekDays, targetDays)
-  const proteinPct = Math.round((macroSnapshot.protein.value / macroSnapshot.protein.target) * 100)
-  const groupedRecent = groupRecentSessions(sessions)
-  const deleteRecentDay = (date) => {
+  const proteinValue = prototypeOnly ? macroSnapshot.protein.value : Number(nutrition?.protein) || 0
+  const proteinTarget = prototypeOnly ? macroSnapshot.protein.target : Number(profile?.protein_target) || 180
+  const proteinPct = Math.round((proteinValue / proteinTarget) * 100)
+  const groupedRecent = groupRecentSessions(sessions, prototypeOnly)
+  const displayMuscleLoad = prototypeOnly ? muscleLoad : buildMuscleLoad(sessions)
+  const highlights = prototypeOnly ? prHighlights : []
+  const deleteRecentDay = async (date) => {
     setSessions(prev => prev.filter(session => session.date !== date))
     if (openDate === date) setOpenDate(null)
+    if (!prototypeOnly) {
+      const rows = sessions.filter(item => item.date === date)
+      const results = await Promise.all(rows.map(item => deleteSession(item.id)))
+      const failed = results.find(result => result.error)
+      if (failed?.error) alert('刪除訓練失敗：' + failed.error.message)
+      reload()
+    }
   }
   const removeRecentExercise = async (exercise) => {
     const previous = sessions
@@ -81,7 +101,7 @@ export default function HomeScreen({ session }) {
 
       <div className="metric-grid" style={{ marginTop: 18 }}>
         <MetricCard label="今日" value={trainedToday ? '已訓練' : '待開始'} detail={trainedToday ? 'Nice work' : '30-45 分鐘'} />
-        <MetricCard label="蛋白質" value={`${macroSnapshot.protein.value}g`} detail={`${proteinPct}% / ${macroSnapshot.protein.target}g`} />
+        <MetricCard label="蛋白質" value={`${proteinValue}g`} detail={`${proteinPct}% / ${proteinTarget}g`} />
         <MetricCard label="週目標" value={`${weekProgress}/${targetDays}`} detail="訓練日" />
       </div>
 
@@ -111,16 +131,16 @@ export default function HomeScreen({ session }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div className="section-title" style={{ margin: 0 }}>肌肉群訓練量</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>有效組數模擬分佈</div>
+            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>{prototypeOnly ? '有效組數模擬分佈' : '依雲端訓練紀錄整理'}</div>
           </div>
           <span className="pill" style={{ color: '#fff', background: 'var(--orange)' }}>本週</span>
         </div>
-        <MuscleRadar data={muscleLoad} />
+        <MuscleRadar data={displayMuscleLoad} />
       </div>
 
       <div className="section-title">PR 亮點</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-        {prHighlights.map(pr => (
+        {highlights.map(pr => (
           <div key={pr.exercise} className="card" style={{ padding: 14 }}>
             <div className="pill pr-badge" style={{ display: 'inline-flex', marginBottom: 10 }}>PR</div>
             <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{pr.exercise}</div>
@@ -128,6 +148,7 @@ export default function HomeScreen({ session }) {
             <div style={{ fontSize: 12, color: 'var(--orange-d)', fontWeight: 900, marginTop: 6 }}>est. 1RM {pr.estimate}</div>
           </div>
         ))}
+        {!highlights.length && <div className="card" style={{ gridColumn: '1 / -1', color: 'var(--ink-3)', fontSize: 13 }}>完成幾次訓練後，這裡會整理你的最佳表現。</div>}
       </div>
 
       <div className="section-title">最近訓練</div>
@@ -391,8 +412,8 @@ function formatSet(set) {
   return `${set.weight || 0}kg x ${set.reps || 0}`
 }
 
-function groupRecentSessions(sessions) {
-  const source = sessions.length ? sessions : demoSessions
+function groupRecentSessions(sessions, prototypeOnly = false) {
+  const source = sessions.length || !prototypeOnly ? sessions : demoSessions
   const grouped = {}
   source.forEach(s => {
     if (!grouped[s.date]) grouped[s.date] = []
@@ -406,4 +427,30 @@ function groupRecentSessions(sessions) {
       exercises,
       totalSets: exercises.reduce((sum, ex) => sum + (ex.exercise_sets?.length || 0), 0),
     }))
+}
+
+function buildMuscleLoad(sessions) {
+  const buckets = [
+    { label: '胸', keys: ['upper'], value: 0, sets: 0 },
+    { label: '背', keys: ['upper'], value: 0, sets: 0 },
+    { label: '腿', keys: ['lower'], value: 0, sets: 0 },
+    { label: '肩', keys: ['upper'], value: 0, sets: 0 },
+    { label: '核心', keys: ['core'], value: 0, sets: 0 },
+  ]
+  sessions.forEach(session => session.session_exercises?.forEach(exercise => {
+    const sets = exercise.exercise_sets?.length || 0
+    const name = exercise.name || ''
+    const bucket = exercise.category === 'lower'
+      ? buckets[2]
+      : exercise.category === 'core'
+        ? buckets[4]
+        : name.includes('肩') || name.includes('側平舉')
+          ? buckets[3]
+          : name.includes('背') || name.includes('划') || name.includes('拉')
+            ? buckets[1]
+            : buckets[0]
+    bucket.sets += sets
+  }))
+  const max = Math.max(...buckets.map(item => item.sets), 1)
+  return buckets.map(item => ({ ...item, value: Math.round(item.sets / max * 100) }))
 }

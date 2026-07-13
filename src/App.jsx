@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { supabase } from './lib/supabase'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
 import AuthScreen from './screens/AuthScreen'
 import HomeScreen from './screens/HomeScreen'
 import TrainingScreen from './screens/TrainingScreen'
@@ -20,6 +20,10 @@ export default function App() {
   const [tab, setTab] = useState('home')
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setLoading(false)
+      return undefined
+    }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
       setLoading(false)
@@ -30,7 +34,7 @@ export default function App() {
 
   if (loading) return <Splash />
   const activeSession = demoSession || session
-  if (!activeSession) return <AuthScreen onDemo={() => setDemoSession({
+  if (!activeSession) return <AuthScreen backendReady={isSupabaseConfigured} onDemo={() => setDemoSession({
     prototype: true,
     user: {
       id: '00000000-0000-0000-0000-000000000000',
@@ -67,7 +71,7 @@ export default function App() {
 function Splash() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 12 }}>
-      <div style={{ fontSize: 48 }}>🔥</div>
+      <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="訓練日記" style={{ width: 74, height: 74, borderRadius: 22 }} />
       <div className="display" style={{ fontSize: 20, fontWeight: 700, color: 'var(--blue)' }}>訓練日記</div>
     </div>
   )

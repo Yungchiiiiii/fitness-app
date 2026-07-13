@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { signOut } from '../lib/db'
+import { useEffect, useMemo, useState } from 'react'
+import { getProfile, getRecoveryLogs, getWeightLogs, signOut, upsertProfile, upsertWeightLog } from '../lib/db'
 import { painLogs, weightLogs as seedWeightLogs } from '../lib/prototypeData'
 
 const initialGoals = {
@@ -35,24 +35,90 @@ export default function ProfileScreen({ session }) {
   const email = session?.user?.email
   const [weeklyWeight, setWeeklyWeight] = useState('60.0')
   const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
+  const [recovery, setRecovery] = useState(painLogs)
   const [goals, setGoals] = useState(loadGoals)
   const [showGoals, setShowGoals] = useState(false)
+  const [error, setError] = useState('')
   const targetText = goals.targets?.join('、') || '尚未選擇目標'
 
+  useEffect(() => {
+    if (session?.prototype || !session?.user?.id) return undefined
+    let cancelled = false
+    Promise.all([
+      getProfile(session.user.id),
+      getWeightLogs(session.user.id),
+      getRecoveryLogs(session.user.id),
+    ]).then(([profileResult, weightResult, recoveryResult]) => {
+      if (cancelled) return
+      if (profileResult.data) {
+        const profile = profileResult.data
+        setGoals(prev => ({
+          ...prev,
+          height: profile.height_cm ?? prev.height,
+          weight: profile.weight_kg ?? prev.weight,
+          targets: profile.targets?.length ? profile.targets : prev.targets,
+          trainingDays: profile.training_days ?? prev.trainingDays,
+          calories: profile.calories_target ?? prev.calories,
+          protein: profile.protein_target ?? prev.protein,
+          carbs: profile.carbs_target ?? prev.carbs,
+          fat: profile.fat_target ?? prev.fat,
+        }))
+      }
+      if (!weightResult.error && weightResult.data?.length) {
+        setLogs(weightResult.data.map(log => ({
+          date: new Date(`${log.date}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }),
+          weight: Number(log.weight),
+        })))
+        setWeeklyWeight(String(weightResult.data.at(-1).weight))
+      }
+      if (!recoveryResult.error && recoveryResult.data?.length) setRecovery(recoveryResult.data)
+      if (profileResult.error && profileResult.error.code !== 'PGRST116') setError(`讀取個人資料失敗：${profileResult.error.message}`)
+    })
+    return () => { cancelled = true }
+  }, [session?.user?.id, session?.prototype])
+
   const trend = useMemo(() => Number(((logs.at(-1)?.weight || 0) - (logs[0]?.weight || 0)).toFixed(1)), [logs])
-  const addWeight = () => {
+  const addWeight = async () => {
     const next = parseFloat(weeklyWeight)
     if (!next) return
-    const label = new Date().toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
+    const now = new Date()
+    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const label = now.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
     setLogs(prev => [...prev.slice(-6), { date: label, weight: next }])
+    if (!session?.prototype) {
+      const { error: saveError } = await upsertWeightLog({ user_id: session.user.id, date, weight: next })
+      if (saveError) setError(`儲存體重失敗：${saveError.message}`)
+    }
+  }
+
+  const handleSaveGoals = async (next) => {
+    const normalized = saveGoals(next)
+    setGoals(normalized)
+    setShowGoals(false)
+    if (!session?.prototype) {
+      const { error: saveError } = await upsertProfile({
+        id: session.user.id,
+        display_name: name,
+        height_cm: Number(normalized.height) || null,
+        weight_kg: Number(normalized.weight) || null,
+        targets: normalized.targets || [],
+        training_days: clampTrainingDays(normalized.trainingDays),
+        calories_target: Number(normalized.calories) || null,
+        protein_target: Number(normalized.protein) || null,
+        carbs_target: Number(normalized.carbs) || null,
+        fat_target: Number(normalized.fat) || null,
+      })
+      if (saveError) setError(`儲存目標失敗：${saveError.message}`)
+    }
   }
 
   return (
     <div className="screen-fade">
       <div style={{ padding: '8px 4px 4px' }}>
         <div className="display" style={{ fontSize: 30, fontWeight: 900, color: 'var(--ink-1)' }}>我</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>目標、恢復與個人資料</div>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>目標、恢復與個人資料</div>
       </div>
+      {error && <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{error}</div>}
 
       <div className="card" style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 14 }}>
         <div style={{
@@ -88,11 +154,11 @@ export default function ProfileScreen({ session }) {
 
       <div className="section-title">恢復狀態</div>
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {painLogs.map(log => (
-          <div key={log.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {recovery.map(log => (
+          <div key={log.id || log.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 42, height: 42, borderRadius: 14, background: '#FEE2E2', color: '#DC2626', display: 'grid', placeItems: 'center', fontWeight: 900 }}>!</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{log.bodyPart} 不適</div>
+              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{log.bodyPart || log.body_part} 不適</div>
               <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 2 }}>{log.note}</div>
             </div>
             <span className="pill" style={{ color: '#DC2626', background: '#FEE2E2' }}>{log.intensity}/10</span>
@@ -122,7 +188,7 @@ export default function ProfileScreen({ session }) {
 
       <button className="btn-ghost" style={{ marginTop: 24 }} onClick={() => signOut()}>登出</button>
 
-      {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={(next) => { setGoals(saveGoals(next)); setShowGoals(false) }} />}
+      {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={handleSaveGoals} />}
     </div>
   )
 }

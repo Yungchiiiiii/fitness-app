@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { signIn, signUp } from '../lib/db'
 
-export default function AuthScreen({ onDemo }) {
+export default function AuthScreen({ onDemo, backendReady = true }) {
   const [mode, setMode] = useState('login')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -31,6 +31,7 @@ export default function AuthScreen({ onDemo }) {
 
   if (done) return (
     <div style={styles.wrap}>
+      <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="訓練日記" style={{ width: 70, height: 70, borderRadius: 22, alignSelf: 'center', marginBottom: 12 }} />
       <div className="display" style={styles.logo}>訓練日記</div>
       <div className="card" style={{ textAlign: 'center', padding: 32 }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>✉️</div>
@@ -44,10 +45,16 @@ export default function AuthScreen({ onDemo }) {
   return (
     <div style={styles.wrap}>
       <div style={{ marginBottom: 32, textAlign: 'center' }}>
-        <div style={{ fontSize: 52, marginBottom: 8 }}>🔥</div>
+        <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="訓練日記" style={{ width: 92, height: 92, borderRadius: 28, marginBottom: 8 }} />
         <div className="display" style={styles.logo}>訓練日記</div>
         <div style={{ color: 'var(--ink-3)', marginTop: 6 }}>記錄每一次進步</div>
       </div>
+
+      {!backendReady && (
+        <div className="card" style={{ marginBottom: 12, color: 'var(--ink-2)', fontSize: 13, lineHeight: 1.5 }}>
+          雲端後端尚未設定完成，目前可以先使用示範模式。完成部署設定後，登入即可同步資料。
+        </div>
+      )}
 
       <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {mode === 'signup' && (
@@ -58,7 +65,7 @@ export default function AuthScreen({ onDemo }) {
 
         {error && <div style={{ color: 'var(--coral)', fontSize: 13, fontWeight: 600 }}>{error}</div>}
 
-        <button className="btn-primary" onClick={submit} disabled={loading} style={{ marginTop: 4 }}>
+        <button className="btn-primary" onClick={submit} disabled={loading || !backendReady} style={{ marginTop: 4 }}>
           {loading ? '載入中...' : mode === 'login' ? '登入' : '建立帳號'}
         </button>
         <button className="btn-ghost" onClick={onDemo} type="button">
