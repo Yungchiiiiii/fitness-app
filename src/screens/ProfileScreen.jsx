@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getProfile, getRecoveryLogs, getWeightLogs, upsertProfile, upsertWeightLog } from '../lib/db'
+import { getProfile, getRecoveryLogs, getWeightLogs, updateProfile, upsertWeightLog } from '../lib/db'
 import { painLogs, weightLogs as seedWeightLogs } from '../lib/prototypeData'
 import { supabase } from '../lib/supabase'
 
@@ -99,7 +99,7 @@ export default function ProfileScreen({ session }) {
     setGoals(normalized)
     setShowGoals(false)
     if (!session?.prototype) {
-      const { error: saveError } = await upsertProfile({
+      const { error: saveError } = await updateProfile({
         id: session.user.id,
         display_name: name,
         height_cm: Number(normalized.height) || null,

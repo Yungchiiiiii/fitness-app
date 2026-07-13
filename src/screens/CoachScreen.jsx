@@ -11,6 +11,7 @@ export default function CoachScreen({ session }) {
   const [messages, setMessages] = useState([
     { role: 'coach', text: '我看了你的訓練、飲食和恢復狀態。今天可以保留訓練節奏，但肩部推舉先降壓力。' },
   ])
+  const [composerKey, setComposerKey] = useState(0)
   const [thinking, setThinking] = useState(false)
   const [contextData, setContextData] = useState(() => buildCoachContext())
   const messageEndRef = useRef(null)
@@ -51,6 +52,7 @@ export default function CoachScreen({ session }) {
     if (!clean || thinking) return
     setMessages(prev => [...prev, { role: 'user', text: clean }])
     setText('')
+    setComposerKey(prev => prev + 1)
     setThinking(true)
     try {
       const reply = await askCoachWithAI({ prompt: clean, context })
@@ -94,7 +96,7 @@ export default function CoachScreen({ session }) {
       </div>
 
       <div className="coach-composer">
-        <textarea rows="1" placeholder="直接問 AI：訓練、飲食、恢復..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
+        <textarea key={composerKey} rows="1" placeholder="直接問 AI：訓練、飲食、恢復..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
             ask()
@@ -109,6 +111,8 @@ export default function CoachScreen({ session }) {
 function formatCoachReply(text = '') {
   return String(text)
     .replace(/\r\n?/g, '\n')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^\s*\*\s+/gm, '• ')
     .replace(/[ \t]+([1-9][.、）)])/g, '\n$1')
     .replace(/[ \t]+([•●▪︎-])\s+/g, '\n$1 ')
     .replace(/([^\n])\s*(總結|提醒|注意|建議)[:：]/g, '$1\n\n$2：')

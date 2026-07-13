@@ -8,8 +8,8 @@ export const getProfile = (userId) =>
     .eq('id', userId)
     .single()
 
-export const upsertProfile = (profile) =>
-  supabase.from('profiles').upsert(profile, { onConflict: 'id' })
+export const updateProfile = ({ id, ...updates }) =>
+  supabase.from('profiles').update(updates).eq('id', id).select('id').single()
 
 // ── Workout Sessions ──────────────────────────────────
 export const getSessions = (userId) =>
