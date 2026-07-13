@@ -661,6 +661,7 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .library-filters { display: flex; flex-wrap: wrap; gap: 8px; overflow-x: hidden; padding-bottom: 5px; }
 .library-filters button { color: #fff; background: #111113; padding: 10px 17px; border-radius: 99px; white-space: nowrap; font-weight: 800; }
 .library-filters button.active { background: var(--neon); color: #050505; }
+.library-filters .edit-library-filter { border: 1px solid rgba(255,255,255,.14); }
 .library-list { margin-top: 14px; }
 .library-row { width: 100%; display: flex; justify-content: space-between; align-items: center; text-align: left; color: #fff; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.09); }
 .library-row span { min-width: 0; padding-right: 12px; }
@@ -669,6 +670,8 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .library-row small { color: var(--ink-3); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .library-row i { width: 42px; height: 42px; border-radius: 50%; background: #2a2a2d; color: var(--ink-3); display: grid; place-items: center; font-size: 25px; font-style: normal; flex: 0 0 auto; }
 .library-row i.picked { color: #050505; background: var(--neon); }
+.library-edit-row { gap: 12px; }
+.delete-library-item { flex: 0 0 auto; border-radius: 999px; padding: 10px 14px; background: rgba(255,69,58,.16); color: #ff6961; font-size: 13px; font-weight: 900; }
 
 .custom-exercise-form { margin-top: 14px; padding: 16px; border: 1px solid rgba(166,255,50,.24); border-radius: 18px; background: #111113; display: grid; gap: 11px; }
 .custom-exercise-form > strong { font-size: 17px; }

@@ -145,3 +145,9 @@ export const updateCustomExercise = (id, updates) =>
 
 export const deleteCustomExercise = (id) =>
   supabase.from('custom_exercises').delete().eq('id', id)
+
+export const getHiddenExercises = (userId) =>
+  supabase.from('hidden_exercises').select('exercise_name').eq('user_id', userId)
+
+export const hideExercise = (userId, exerciseName) =>
+  supabase.from('hidden_exercises').insert({ user_id: userId, exercise_name: exerciseName })

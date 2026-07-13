@@ -7,6 +7,8 @@ import {
   createSet,
   deleteCustomExercise,
   getCustomExercises,
+  getHiddenExercises,
+  hideExercise,
   updateCustomExercise,
   updateSession,
 } from '../lib/db'
@@ -36,6 +38,9 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState([])
   const [customExercises, setCustomExercises] = useState([])
+  const [hiddenExerciseNames, setHiddenExerciseNames] = useState([])
+  const [userId, setUserId] = useState(null)
+  const [editingLibrary, setEditingLibrary] = useState(false)
   const [saving, setSaving] = useState(false)
   const [customName, setCustomName] = useState('')
   const [customCategory, setCustomCategory] = useState('auto')
@@ -45,9 +50,15 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
   const [editingCustomId, setEditingCustomId] = useState(null)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    supabase.auth.getUser().then(async ({ data }) => {
       if (!data.user) return
-      getCustomExercises(data.user.id).then(({ data: rows }) => setCustomExercises((rows || []).map(customToLibraryItem)))
+      setUserId(data.user.id)
+      const [customResult, hiddenResult] = await Promise.all([
+        getCustomExercises(data.user.id),
+        getHiddenExercises(data.user.id),
+      ])
+      setCustomExercises((customResult.data || []).map(customToLibraryItem))
+      setHiddenExerciseNames((hiddenResult.data || []).map(row => row.exercise_name))
     })
   }, [])
 
@@ -59,8 +70,9 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
           ...(WORLD_GYM_LIBRARY[filter] || []).map(item => ({ ...item, category: filter })),
         ]
     const normalizedQuery = query.trim().toLowerCase()
-    return rows.filter(item => !normalizedQuery || `${item.name} ${item.target} ${item.equipment}`.toLowerCase().includes(normalizedQuery))
-  }, [customExercises, filter, query])
+    return rows.filter(item => !hiddenExerciseNames.includes(item.name))
+      .filter(item => !normalizedQuery || `${item.name} ${item.target} ${item.equipment}`.toLowerCase().includes(normalizedQuery))
+  }, [customExercises, filter, hiddenExerciseNames, query])
 
   const addMovement = item => {
     if (selected.some(movement => movement.name === item.name)) return
@@ -167,8 +179,8 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
     }
   }
 
-  const removeCustom = async item => {
-    if (!window.confirm(`確定刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
+  const removeCustom = async (item, askForConfirmation = true) => {
+    if (askForConfirmation && !window.confirm(`確定刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
     const { error } = await deleteCustomExercise(item.id)
     if (error) {
       setCustomError(`刪除失敗：${error.message}`)
@@ -176,6 +188,25 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
     }
     setCustomExercises(previous => previous.filter(row => row.id !== item.id))
     setSelected(previous => previous.filter(row => row.id !== item.id))
+  }
+
+  const removeLibraryItem = async item => {
+    if (!window.confirm(`確定從你的運動清單刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
+    if (item.custom) {
+      await removeCustom(item, false)
+      return
+    }
+    if (!userId) {
+      setCustomError('尚未取得帳號資料，請重新整理後再試。')
+      return
+    }
+    const { error } = await hideExercise(userId, item.name)
+    if (error && error.code !== '23505') {
+      setCustomError(`刪除失敗：${error.message}`)
+      return
+    }
+    setHiddenExerciseNames(previous => [...new Set([...previous, item.name])])
+    setSelected(previous => previous.filter(row => row.name !== item.name))
   }
 
   const buildName = () => [...new Set(selected.map(item => CATEGORY_META[item.category].label))].join(' + ') || '今日訓練'
@@ -255,14 +286,14 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
       </section>)}
 
       <section className="movement-library">
-        <div className="eyebrow muted">WORLD GYM 三峽動作庫</div>
         <label className="movement-search"><span>⌕</span><input placeholder="搜尋器械或動作" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <div className="library-filters">
           {Object.entries(CATEGORY_META).map(([key, value]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{value.label}</button>)}
-          <button className={filter === 'custom' ? 'active custom-filter' : 'custom-filter'} onClick={() => setFilter('custom')}>＋ 新增運動</button>
+          <button className={filter === 'custom' && !editingLibrary ? 'active custom-filter' : 'custom-filter'} onClick={() => { setEditingLibrary(false); setFilter('custom') }}>＋ 新增運動</button>
+          <button className={editingLibrary ? 'active edit-library-filter' : 'edit-library-filter'} onClick={() => { setEditingLibrary(previous => !previous); if (filter === 'custom') setFilter('lower') }}>編輯運動</button>
         </div>
 
-        {filter === 'custom' && <div className="custom-exercise-form">
+        {filter === 'custom' && !editingLibrary && <div className="custom-exercise-form">
           <strong>{editingCustomId ? '編輯自訂運動' : '新增自己的器械或動作'}</strong>
           <input value={customName} onChange={event => setCustomName(event.target.value)} placeholder="名稱，例如：臀部那台往外推" />
           <div className="custom-classify-row">
@@ -281,13 +312,17 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
         <div className="library-list">
           {library.map(item => {
             const picked = selected.some(movement => movement.name === item.name)
+            if (editingLibrary) return <div className="library-row library-edit-row" key={item.id || item.name}>
+              <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span>
+              <button className="delete-library-item" onClick={() => removeLibraryItem(item)} aria-label={`刪除 ${item.name}`}>刪除</button>
+            </div>
             return item.custom && filter === 'custom'
               ? <SwipeCustomExercise key={item.id} item={item} onEdit={() => editCustom(item)} onDelete={() => removeCustom(item)} onPick={() => picked ? removeMovement(item.name) : addMovement(item)} picked={picked} />
               : <button key={item.id || item.name} className="library-row" onClick={() => picked ? removeMovement(item.name) : addMovement(item)}>
                 <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span><i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
               </button>
           })}
-          {!library.length && <div className="empty-custom-library">還沒有自訂動作，先在上方建立一個。</div>}
+          {!library.length && <div className="empty-custom-library">{editingLibrary ? '這個分類目前沒有可編輯的運動。' : '還沒有自訂動作，先在上方建立一個。'}</div>}
         </div>
       </section>
     </main>
