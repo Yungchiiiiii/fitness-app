@@ -5,7 +5,9 @@ import {
   createExercise,
   createSession,
   createSet,
+  deleteCustomExercise,
   getCustomExercises,
+  updateCustomExercise,
   updateSession,
 } from '../lib/db'
 import { CATEGORY_META, WORLD_GYM_LIBRARY } from '../lib/exerciseLibrary'
@@ -40,6 +42,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
   const [customTarget, setCustomTarget] = useState('')
   const [classifying, setClassifying] = useState(false)
   const [customError, setCustomError] = useState('')
+  const [editingCustomId, setEditingCustomId] = useState(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -117,6 +120,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
       const item = customToLibraryItem(data)
       setCustomExercises(previous => [...previous.filter(row => row.name !== item.name), item])
       addMovement(item)
+      setFilter(category)
       setCustomName('')
       setCustomCategory('auto')
       setCustomTarget('')
@@ -126,6 +130,52 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
     } finally {
       setClassifying(false)
     }
+  }
+
+  const editCustom = item => {
+    setEditingCustomId(item.id)
+    setCustomName(item.name)
+    setCustomCategory(item.category)
+    setCustomTarget(item.target)
+    setCustomError('')
+    window.setTimeout(() => document.querySelector('.custom-exercise-form input')?.focus(), 0)
+  }
+
+  const saveCustomEdit = async () => {
+    if (!editingCustomId || !customName.trim() || !CATEGORY_META[customCategory]) return
+    setClassifying(true)
+    setCustomError('')
+    try {
+      const { data, error } = await updateCustomExercise(editingCustomId, {
+        name: customName.trim(),
+        category: customCategory,
+        input_type: CATEGORY_META[customCategory].inputType,
+        target: customTarget || CATEGORY_META[customCategory].fallbackTarget,
+      })
+      if (error) throw error
+      const item = customToLibraryItem(data)
+      setCustomExercises(previous => previous.map(row => row.id === item.id ? item : row))
+      setSelected(previous => previous.map(row => row.id === item.id ? { ...row, ...item } : row))
+      setEditingCustomId(null)
+      setCustomName('')
+      setCustomCategory('auto')
+      setCustomTarget('')
+    } catch (error) {
+      setCustomError(`編輯失敗：${error.message}`)
+    } finally {
+      setClassifying(false)
+    }
+  }
+
+  const removeCustom = async item => {
+    if (!window.confirm(`確定刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
+    const { error } = await deleteCustomExercise(item.id)
+    if (error) {
+      setCustomError(`刪除失敗：${error.message}`)
+      return
+    }
+    setCustomExercises(previous => previous.filter(row => row.id !== item.id))
+    setSelected(previous => previous.filter(row => row.id !== item.id))
   }
 
   const buildName = () => [...new Set(selected.map(item => CATEGORY_META[item.category].label))].join(' + ') || '今日訓練'
@@ -213,7 +263,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
         </div>
 
         {filter === 'custom' && <div className="custom-exercise-form">
-          <strong>新增自己的器械或動作</strong>
+          <strong>{editingCustomId ? '編輯自訂運動' : '新增自己的器械或動作'}</strong>
           <input value={customName} onChange={event => setCustomName(event.target.value)} placeholder="名稱，例如：臀部那台往外推" />
           <div className="custom-classify-row">
             <select value={customCategory} onChange={event => setCustomCategory(event.target.value)}>
@@ -224,20 +274,38 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
           </div>
           {customTarget && <div className="ai-target-result"><span>AI 建議</span><strong>{CATEGORY_META[customCategory]?.label} · {customTarget}</strong></div>}
           {customError && <div className="custom-error">{customError}</div>}
-          <button className="save-custom-exercise" onClick={saveCustom} disabled={classifying || !customName.trim()}>儲存到雲端並加入</button>
+          <button className="save-custom-exercise" onClick={editingCustomId ? saveCustomEdit : saveCustom} disabled={classifying || !customName.trim()}>{editingCustomId ? '儲存修改' : 'AI 分類、儲存並加入'}</button>
+          {editingCustomId && <button className="cancel-custom-edit" onClick={() => { setEditingCustomId(null); setCustomName(''); setCustomCategory('auto'); setCustomTarget('') }}>取消編輯</button>}
         </div>}
 
         <div className="library-list">
           {library.map(item => {
             const picked = selected.some(movement => movement.name === item.name)
-            return <button key={item.id || item.name} className="library-row" onClick={() => picked ? removeMovement(item.name) : addMovement(item)}>
-              <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span><i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
-            </button>
+            return item.custom && filter === 'custom'
+              ? <SwipeCustomExercise key={item.id} item={item} onEdit={() => editCustom(item)} onDelete={() => removeCustom(item)} onPick={() => picked ? removeMovement(item.name) : addMovement(item)} picked={picked} />
+              : <button key={item.id || item.name} className="library-row" onClick={() => picked ? removeMovement(item.name) : addMovement(item)}>
+                <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span><i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
+              </button>
           })}
           {!library.length && <div className="empty-custom-library">還沒有自訂動作，先在上方建立一個。</div>}
         </div>
       </section>
     </main>
+  </div>
+}
+
+function SwipeCustomExercise({ item, onEdit, onDelete, onPick, picked }) {
+  const [x, setX] = useState(0)
+  const [start, setStart] = useState(null)
+  const move = clientX => start !== null && setX(Math.max(-150, Math.min(0, clientX - start)))
+  const finish = () => { setX(x < -38 ? -150 : 0); setStart(null) }
+  return <div className="custom-swipe-row">
+    <div className="custom-swipe-actions"><button onClick={onEdit}>編輯</button><button onClick={onDelete}>刪除</button></div>
+    <button className="library-row custom-library-row" style={{ transform: `translateX(${x}px)` }} onClick={onPick}
+      onTouchStart={event => setStart(event.touches[0].clientX)} onTouchMove={event => move(event.touches[0].clientX)} onTouchEnd={finish}
+      onMouseDown={event => setStart(event.clientX)} onMouseMove={event => event.buttons === 1 && move(event.clientX)} onMouseUp={finish} onMouseLeave={() => start !== null && finish()}>
+      <span><strong>{item.name}</strong><small>{CATEGORY_META[item.category]?.label} · {item.target}</small></span><i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
+    </button>
   </div>
 }
 

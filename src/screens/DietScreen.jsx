@@ -326,11 +326,10 @@ function AddMealSheet({ onClose, onAdd }) {
 
         {mode === 'photo' && (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <label className="card photo-picker" style={{
+            <div className="card photo-picker" style={{
               textAlign: 'center',
               color: 'var(--ink-3)',
               padding: photoPreview ? 0 : 24,
-              cursor: 'pointer',
               minHeight: 168,
               overflow: 'hidden',
               display: 'grid',
@@ -347,18 +346,19 @@ function AddMealSheet({ onClose, onAdd }) {
                   <div style={{ fontSize: 13, marginTop: 6 }}>AI 會依照片辨識食物與估算營養</div>
                 </div>
               )}
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                style={{ display: 'none' }}
-                onChange={e => {
-                  setPhotoFile(e.target.files?.[0] || null)
-                  setAnalysis(null)
-                  setAnalysisError('')
-                }}
-              />
-            </label>
+            </div>
+            <div className="photo-source-grid">
+              <label>
+                <span>從相片選擇</span>
+                <small>使用相簿裡的照片</small>
+                <input type="file" accept="image/*" onChange={e => selectPhoto(e, setPhotoFile, setAnalysis, setAnalysisError)} />
+              </label>
+              <label>
+                <span>現在拍照</span>
+                <small>直接開啟相機</small>
+                <input type="file" accept="image/*" capture="environment" onChange={e => selectPhoto(e, setPhotoFile, setAnalysis, setAnalysisError)} />
+              </label>
+            </div>
             <textarea
               className="inp"
               placeholder="補充描述：例如半碗飯、雞胸、醬比較多、飲料無糖..."
@@ -387,6 +387,13 @@ function AddMealSheet({ onClose, onAdd }) {
     </div>
     </div>
   )
+}
+
+function selectPhoto(event, setPhotoFile, setAnalysis, setAnalysisError) {
+  setPhotoFile(event.target.files?.[0] || null)
+  setAnalysis(null)
+  setAnalysisError('')
+  event.target.value = ''
 }
 
 function SwipeMealCard({ meal, onDelete }) {

@@ -140,5 +140,8 @@ export const getCustomExercises = (userId) =>
 export const createCustomExercise = (ex) =>
   supabase.from('custom_exercises').insert(ex).select().single()
 
+export const updateCustomExercise = (id, updates) =>
+  supabase.from('custom_exercises').update(updates).eq('id', id).select().single()
+
 export const deleteCustomExercise = (id) =>
   supabase.from('custom_exercises').delete().eq('id', id)
