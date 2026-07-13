@@ -18,6 +18,11 @@ type CoachChatRequest = {
   context?: unknown
 }
 
+type ExerciseClassificationRequest = {
+  task: 'exercise-classification'
+  name: string
+}
+
 const geminiKey = Deno.env.get('GEMINI_API_KEY')
 const groqKey = Deno.env.get('GROQ_API_KEY')
 
@@ -28,7 +33,7 @@ Deno.serve(async (req) => {
 
   try {
     const { client, user } = await requireUser(req)
-    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest
+    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest
 
     if (body.task === 'food-analysis') {
       const meal = await analyzeFood(body)
@@ -47,6 +52,9 @@ Deno.serve(async (req) => {
       }, { reply: reply.slice(0, 6000) })
       return json({ reply })
     }
+    if (body.task === 'exercise-classification') {
+      return json({ classification: await classifyExercise(body) })
+    }
     return json({ error: 'Unknown task' }, 400)
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500
@@ -56,13 +64,13 @@ Deno.serve(async (req) => {
 
 async function requireUser(req: Request) {
   const authorization = req.headers.get('Authorization')
-  if (!authorization?.startsWith('Bearer ')) throw new HttpError('需要登入才能使用 AI 功能。', 401)
+  if (!authorization?.startsWith('Bearer ')) throw new HttpError('雲端身分尚未建立，請重新整理後再試。', 401)
   const url = Deno.env.get('SUPABASE_URL')
   const key = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('SUPABASE_PUBLISHABLE_KEY')
   if (!url || !key) throw new Error('Server missing Supabase function configuration')
   const client = createClient(url, key, { global: { headers: { Authorization: authorization } } })
   const { data, error } = await client.auth.getUser(authorization.slice('Bearer '.length))
-  if (error || !data.user) throw new HttpError('登入狀態已失效，請重新登入。', 401)
+  if (error || !data.user) throw new HttpError('雲端身分已失效，請重新整理後再試。', 401)
   return { client, user: data.user }
 }
 
@@ -139,6 +147,29 @@ ${JSON.stringify(body.context || {})}
 使用者問題：
 ${body.prompt}`,
   }])).trim()
+}
+
+async function classifyExercise(body: ExerciseClassificationRequest) {
+  const name = body.name?.trim()
+  if (!name) throw new HttpError('請先輸入動作或器械名稱。', 400)
+  const instruction = `你是健身房動作分類助手。請判斷使用者輸入的動作或器械主要訓練分類與部位。
+只回傳 JSON，不要 markdown 或多餘文字。
+category 只能是 lower、upper、cardio、core 其中一個。
+inputType 只能是 strength、cardio、core 其中一個；lower/upper 使用 strength，有氧使用 cardio，核心使用 core。
+target 請用簡短繁體中文列出主要肌群，例如「股四頭肌、臀大肌」。
+格式：{"category":"lower","target":"股四頭肌、臀大肌","inputType":"strength"}
+使用者輸入：${name}`
+  const text = groqKey
+    ? await callGroq([{ role: 'system', content: '你是精確的健身動作分類助手。' }, { role: 'user', content: instruction }])
+    : await callGemini([{ text: instruction }])
+  const parsed = parseJson(text)
+  const category = ['lower', 'upper', 'cardio', 'core'].includes(parsed.category) ? parsed.category : 'upper'
+  const inputType = category === 'cardio' ? 'cardio' : category === 'core' ? 'core' : 'strength'
+  return {
+    category,
+    target: String(parsed.target || '全身肌群').slice(0, 80),
+    inputType,
+  }
 }
 
 async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {

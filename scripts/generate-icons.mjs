@@ -7,11 +7,7 @@ fs.mkdirSync(outDir, { recursive: true })
 
 const palette = {
   white: [255, 255, 255, 255],
-  ink: [38, 54, 79, 255],
-  coral: [225, 116, 103, 255],
-  mint: [130, 186, 170, 255],
-  blush: [250, 221, 210, 255],
-  shadow: [38, 54, 79, 28],
+  ink: [10, 10, 10, 255],
 }
 
 function blend(dst, src, a) {
@@ -73,37 +69,29 @@ function makeIcon(size) {
   const s = n => n * scale
   const buffer = Buffer.alloc(size * size * 4, 0)
 
-  draw(buffer, size, roundedRect(0, 0, size, size, s(112)), palette.white)
-  draw(buffer, size, ellipse(s(256), s(470), s(135), s(18)), palette.shadow)
-  draw(buffer, size, ellipse(s(256), s(318), s(132), s(118)), palette.blush, 3)
+  draw(buffer, size, roundedRect(0, 0, size, size, 0), palette.white)
 
-  // Dumbbell outline.
-  draw(buffer, size, capsule(s(126), s(146), s(386), s(146), s(10)), palette.ink)
-  draw(buffer, size, capsule(s(126), s(146), s(386), s(146), s(3.5)), palette.white)
-  for (const [x, width, height] of [[82, 32, 100], [112, 23, 78], [398, 32, 100], [377, 23, 78]]) {
-    draw(buffer, size, roundedRect(s(x), s(96 + (100 - height) / 2), s(width), s(height), s(10)), palette.ink)
-    draw(buffer, size, roundedRect(s(x + 8), s(104 + (100 - height) / 2), s(width - 16), s(height - 16), s(5)), palette.white)
+  // Black line-art dumbbell.
+  draw(buffer, size, capsule(s(104), s(126), s(408), s(126), s(8)), palette.ink)
+  for (const [x, width, height] of [[64, 34, 112], [96, 26, 84], [414, 34, 112], [390, 26, 84]]) {
+    draw(buffer, size, roundedRect(s(x), s(126 - height / 2), s(width), s(height), s(9)), palette.ink)
+    draw(buffer, size, roundedRect(s(x + 7), s(133 - height / 2), s(width - 14), s(height - 14), s(4)), palette.white)
   }
 
-  // Cute line-art person lifting the bar.
-  draw(buffer, size, ellipse(s(256), s(274), s(39), s(39)), palette.ink)
-  draw(buffer, size, ellipse(s(256), s(274), s(31), s(31)), palette.white)
-  draw(buffer, size, ellipse(s(242), s(273), s(4), s(5)), palette.ink, 3)
-  draw(buffer, size, ellipse(s(270), s(273), s(4), s(5)), palette.ink, 3)
-  draw(buffer, size, capsule(s(248), s(290), s(264), s(290), s(2.5)), palette.coral, 3)
-  draw(buffer, size, ellipse(s(231), s(286), s(7), s(4)), palette.coral, 3)
-  draw(buffer, size, ellipse(s(281), s(286), s(7), s(4)), palette.coral, 3)
-
-  draw(buffer, size, capsule(s(232), s(340), s(177), s(167), s(9)), palette.ink)
-  draw(buffer, size, capsule(s(280), s(340), s(335), s(167), s(9)), palette.ink)
-  draw(buffer, size, ellipse(s(174), s(161), s(13), s(13)), palette.mint)
-  draw(buffer, size, ellipse(s(338), s(161), s(13), s(13)), palette.mint)
-  draw(buffer, size, capsule(s(256), s(320), s(256), s(399), s(10)), palette.ink)
-  draw(buffer, size, capsule(s(256), s(333), s(256), s(389), s(5)), palette.mint)
-  draw(buffer, size, capsule(s(256), s(397), s(215), s(458), s(9)), palette.ink)
-  draw(buffer, size, capsule(s(256), s(397), s(297), s(458), s(9)), palette.ink)
-  draw(buffer, size, capsule(s(208), s(461), s(185), s(461), s(8)), palette.ink)
-  draw(buffer, size, capsule(s(304), s(461), s(327), s(461), s(8)), palette.ink)
+  // Faceless stick figure lifting the dumbbell.
+  draw(buffer, size, ellipse(s(256), s(231), s(43), s(43)), palette.ink)
+  draw(buffer, size, ellipse(s(256), s(231), s(33), s(33)), palette.white)
+  draw(buffer, size, capsule(s(256), s(278), s(256), s(386), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(250), s(292), s(176), s(165), s(8)), palette.ink)
+  draw(buffer, size, capsule(s(262), s(292), s(336), s(165), s(8)), palette.ink)
+  draw(buffer, size, capsule(s(176), s(165), s(176), s(128), s(8)), palette.ink)
+  draw(buffer, size, capsule(s(336), s(165), s(336), s(128), s(8)), palette.ink)
+  draw(buffer, size, ellipse(s(176), s(128), s(11), s(11)), palette.ink)
+  draw(buffer, size, ellipse(s(336), s(128), s(11), s(11)), palette.ink)
+  draw(buffer, size, capsule(s(256), s(386), s(207), s(459), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(256), s(386), s(305), s(459), s(9)), palette.ink)
+  draw(buffer, size, capsule(s(207), s(459), s(180), s(459), s(8)), palette.ink)
+  draw(buffer, size, capsule(s(305), s(459), s(332), s(459), s(8)), palette.ink)
 
   return buffer
 }

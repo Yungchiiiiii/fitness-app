@@ -38,3 +38,15 @@ export async function askCoachWithAI({ prompt, context }) {
   if (error) throw new Error(error.message || 'AI 教練回覆失敗')
   return data?.reply?.trim() || '我暫時沒有取得有效回覆，請再問一次。'
 }
+
+export async function classifyExerciseWithAI(name) {
+  const cleanName = String(name || '').trim()
+  if (!cleanName) throw new Error('請先輸入動作或器械名稱')
+  const { data, error } = await supabase.functions.invoke('fitness-ai', {
+    body: { task: 'exercise-classification', name: cleanName },
+  })
+  if (error) throw new Error(error.message || 'AI 分類失敗')
+  const classification = data?.classification
+  if (!classification?.category || !classification?.target) throw new Error('AI 沒有回傳有效分類')
+  return classification
+}
