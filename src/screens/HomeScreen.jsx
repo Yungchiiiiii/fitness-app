@@ -1,456 +1,377 @@
-import { useEffect, useState } from 'react'
-import { deleteExercise, deleteSession, getDailyNutrition, getProfile, getSessions } from '../lib/db'
-import { ExercisePickerSheet, SetsFillerSheet } from '../components/NewSessionModal'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  createSet,
+  deleteExercise,
+  deleteSession,
+  deleteSet,
+  getDailyNutrition,
+  getProfile,
+  getSessions,
+  updateExercise,
+  updateSession,
+  updateSet,
+} from '../lib/db'
+import { ExercisePickerSheet, CAT_META } from '../components/NewSessionModal'
 import ProfileScreen from './ProfileScreen'
-import { demoSessions, macroSnapshot, muscleLoad, prHighlights } from '../lib/prototypeData'
+import { demoSessions, macroSnapshot } from '../lib/prototypeData'
+
+const isoDate = date => {
+  const offset = date.getTimezoneOffset()
+  return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10)
+}
 
 export default function HomeScreen({ session }) {
+  const prototypeOnly = Boolean(session.prototype)
+  const today = useMemo(() => new Date(), [])
+  const todayString = isoDate(today)
   const name = session?.user?.user_metadata?.name || '你'
-  const today = new Date()
-  const dateStr = today.toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'long' })
-  const greeting = today.getHours() < 12 ? '早安' : today.getHours() < 18 ? '午安' : '晚安'
-  const prototypeOnly = !!session.prototype
-
   const [sessions, setSessions] = useState(prototypeOnly ? demoSessions : [])
-  const [showPicker, setShowPicker] = useState(false)
-  const [fillData, setFillData] = useState(null)
-  const [showProfile, setShowProfile] = useState(false)
-  const [openDate, setOpenDate] = useState(null)
-  const [targetDays, setTargetDays] = useState(() => getSavedTargetDays())
   const [nutrition, setNutrition] = useState(null)
   const [profile, setProfile] = useState(null)
-  const todayStr = today.toISOString().split('T')[0]
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
+  const [openDays, setOpenDays] = useState({})
+  const [collapsedMonths, setCollapsedMonths] = useState({})
+  const [editingDay, setEditingDay] = useState(null)
+  const targetDays = Math.max(1, Math.min(7, Number(profile?.training_days) || readTargetDays()))
+
+  const reload = async () => {
+    if (prototypeOnly) return
+    const { data } = await getSessions(session.user.id)
+    setSessions(data || [])
+  }
 
   useEffect(() => {
-    if (prototypeOnly) {
-      setSessions(demoSessions)
-      return
-    }
-    getSessions(session.user.id).then(({ data }) => setSessions(data || []))
+    if (prototypeOnly) return
+    reload()
     Promise.all([
-      getDailyNutrition(session.user.id, todayStr, todayStr),
+      getDailyNutrition(session.user.id, todayString, todayString),
       getProfile(session.user.id),
     ]).then(([nutritionResult, profileResult]) => {
       setNutrition(nutritionResult.data?.[0] || null)
       setProfile(profileResult.data || null)
     })
-  }, [prototypeOnly, session.user.id, todayStr])
-  useEffect(() => {
-    const syncGoals = (event) => setTargetDays(clampTargetDays(event.detail?.trainingDays || getSavedTargetDays()))
-    window.addEventListener('fitness-goals-updated', syncGoals)
-    return () => window.removeEventListener('fitness-goals-updated', syncGoals)
-  }, [])
+  }, [prototypeOnly, session.user.id, todayString])
 
-  const reload = () => {
-    if (prototypeOnly) return
-    getSessions(session.user.id).then(({ data }) => setSessions(data || []))
-  }
-  const trainedToday = new Set(sessions.map(s => s.date)).has(todayStr)
-  const trainedWeekDays = prototypeOnly ? Math.max(new Set(sessions.slice(0, 7).map(s => s.date)).size, 3) : new Set(sessions.filter(s => s.date >= todayStr.slice(0, 8) + '01').map(s => s.date)).size
-  const weekProgress = Math.min(trainedWeekDays, targetDays)
+  const days = useMemo(() => groupByDay(sessions), [sessions])
+  const months = useMemo(() => groupByMonth(days), [days])
+  const weekDates = getCurrentWeek(today)
+  const trainedDates = new Set(days.map(day => day.date))
+  const weekCount = weekDates.filter(day => trainedDates.has(day.date)).length
+  const monthCount = days.filter(day => day.date.slice(0, 7) === todayString.slice(0, 7)).length
   const proteinValue = prototypeOnly ? macroSnapshot.protein.value : Number(nutrition?.protein) || 0
-  const proteinTarget = prototypeOnly ? macroSnapshot.protein.target : Number(profile?.protein_target) || 180
-  const proteinPct = Math.round((proteinValue / proteinTarget) * 100)
-  const groupedRecent = groupRecentSessions(sessions, prototypeOnly)
-  const displayMuscleLoad = prototypeOnly ? muscleLoad : buildMuscleLoad(sessions)
-  const highlights = prototypeOnly ? prHighlights : []
-  const deleteRecentDay = async (date) => {
-    setSessions(prev => prev.filter(session => session.date !== date))
-    if (openDate === date) setOpenDate(null)
-    if (!prototypeOnly) {
-      const rows = sessions.filter(item => item.date === date)
-      const results = await Promise.all(rows.map(item => deleteSession(item.id)))
-      const failed = results.find(result => result.error)
-      if (failed?.error) alert('刪除訓練失敗：' + failed.error.message)
-      reload()
-    }
+  const proteinTarget = prototypeOnly ? macroSnapshot.protein.target : Number(profile?.protein_target) || 120
+  const calorieValue = prototypeOnly ? macroSnapshot.calories.value : Number(nutrition?.calories || nutrition?.kcal) || 0
+  const calorieTarget = prototypeOnly ? macroSnapshot.calories.target : Number(profile?.calories_target || profile?.calorie_target) || 2118
+
+  const handleCreated = created => {
+    if (prototypeOnly && created) setSessions(previous => [created, ...previous])
+    setShowBuilder(false)
+    reload()
   }
-  const removeRecentExercise = async (exercise) => {
+
+  const removeDay = async day => {
+    if (!window.confirm(`確定刪除 ${formatDate(day.date)} 的訓練紀錄？`)) return
     const previous = sessions
-    setSessions(prev => prev
-      .map(item => item.id === exercise.sessionId
-        ? { ...item, session_exercises: (item.session_exercises || []).filter(ex => ex.id !== exercise.id) }
-        : item)
-      .filter(item => (item.session_exercises || []).length > 0))
-    if (prototypeOnly || String(exercise.id).startsWith('proto-')) return
-    const { error } = await deleteExercise(exercise.id)
-    if (error) {
+    setSessions(items => items.filter(item => item.date !== day.date))
+    if (prototypeOnly) return
+    const results = await Promise.all(day.sessions.map(item => deleteSession(item.id)))
+    if (results.some(result => result.error)) {
       setSessions(previous)
-      alert('刪除動作失敗：' + (error.message || '請稍後再試'))
+      alert('刪除失敗，請稍後再試。')
     }
   }
 
+  const applyPrototypeEdit = updated => {
+    setSessions(previous => {
+      const ids = new Set(updated.sessionIds)
+      return previous.map(item => ids.has(item.id) ? {
+        ...item,
+        date: updated.date,
+        name: updated.name,
+        session_exercises: updated.exercises.filter(exercise => exercise.sessionId === item.id).map(exercise => ({
+          ...exercise,
+          exercise_sets: exercise.sets,
+        })),
+      } : item)
+    })
+    setEditingDay(null)
+  }
+
   return (
-    <div className="screen-fade">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '8px 4px 4px' }}>
+    <div className="diary-home">
+      <header className="diary-hero">
         <div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', fontWeight: 800 }}>{dateStr}</div>
-          <div className="display" style={{ fontSize: 31, fontWeight: 900, color: 'var(--ink-1)', marginTop: 2 }}>
-            {greeting}，{name}
-          </div>
+          <div className="eyebrow muted">TRAINING DIARY</div>
+          <h1>訓練日記</h1>
+          <p>{today.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</p>
         </div>
-        <button onClick={() => setShowProfile(true)} style={{
-          width: 46, height: 46, borderRadius: 16,
-          background: 'linear-gradient(135deg, #FF7A1E, #F43F5E)',
-          color: '#fff', display: 'grid', placeItems: 'center',
-          fontSize: 18, fontWeight: 900, boxShadow: 'var(--shadow-md)',
-        }}>
-          {name[0]?.toUpperCase()}
+        <button className="profile-orb" onClick={() => setShowProfile(true)} aria-label="個人設定">
+          <UserIcon />
         </button>
-      </div>
+      </header>
 
-      <div className="metric-grid" style={{ marginTop: 18 }}>
-        <MetricCard label="今日" value={trainedToday ? '已訓練' : '待開始'} detail={trainedToday ? 'Nice work' : '30-45 分鐘'} />
-        <MetricCard label="蛋白質" value={`${proteinValue}g`} detail={`${proteinPct}% / ${proteinTarget}g`} />
-        <MetricCard label="週目標" value={`${weekProgress}/${targetDays}`} detail="訓練日" />
-      </div>
-
-      <button className="cta-card" style={{ marginTop: 16 }} onClick={() => setShowPicker(true)}>
-        <div style={{ textAlign: 'left' }}>
-          <div style={{ color: 'rgba(255,255,255,0.82)', fontSize: 12, fontWeight: 800 }}>準備好了嗎？</div>
-          <div className="display" style={{ color: '#fff', fontSize: 22, fontWeight: 900, marginTop: 2 }}>開始今日訓練</div>
+      <section className="activity-card">
+        <ActivityRings training={weekCount / targetDays} protein={proteinValue / proteinTarget} calories={calorieValue / calorieTarget} />
+        <div className="activity-legends">
+          <RingLegend color="var(--pink)" label="訓練 · 本週" value={weekCount} target={`/${targetDays} 天`} />
+          <RingLegend color="var(--neon)" label="蛋白質 · 今日" value={proteinValue} target={`/${proteinTarget} g`} />
+          <RingLegend color="var(--cyan)" label="熱量 · 今日" value={calorieValue} target={`/${calorieTarget}`} unit="kcal" />
         </div>
-        <div style={{ width: 44, height: 44, borderRadius: 14, background: 'rgba(255,255,255,0.24)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 28, fontWeight: 800 }}>+</div>
-      </button>
+      </section>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <div>
-            <div className="section-title" style={{ margin: 0 }}>本週運動目標</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>穩定比爆衝更重要</div>
-          </div>
-          <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>{weekProgress}/{targetDays} 天</span>
+      <section className="stat-pair">
+        <div className="stat-tile pink-glow"><span>本週訓練</span><strong>{weekCount}</strong><small>天</small></div>
+        <div className="stat-tile cyan-glow"><span>本月訓練</span><strong>{monthCount}</strong><small>天</small></div>
+      </section>
+
+      <section className="week-section">
+        <div className="section-row"><span>本週</span><strong>{weekCount}/{targetDays} 天訓練</strong></div>
+        <div className="week-strip">
+          {weekDates.map(day => {
+            const active = trainedDates.has(day.date)
+            const current = day.date === todayString
+            return (
+              <div className={`week-day ${current ? 'current' : ''}`} key={day.date}>
+                <span>{day.weekday}</span><strong>{day.day}</strong><i className={active ? 'trained' : ''} />
+              </div>
+            )
+          })}
         </div>
-        <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${Math.min(100, trainedWeekDays / targetDays * 100)}%` }} />
+      </section>
+
+      <section className="history-section">
+        <div className="history-title">
+          <h2>訓練紀錄</h2>
+          <button className="new-session-button" onClick={() => setShowBuilder(true)}>＋ 新訓練</button>
         </div>
-        <WeekStrip sessions={sessions} todayStr={todayStr} />
-      </div>
-
-      <div className="card" style={{ marginTop: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div className="section-title" style={{ margin: 0 }}>肌肉群訓練量</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>{prototypeOnly ? '有效組數模擬分佈' : '依雲端訓練紀錄整理'}</div>
-          </div>
-          <span className="pill" style={{ color: '#fff', background: 'var(--orange)' }}>本週</span>
-        </div>
-        <MuscleRadar data={displayMuscleLoad} />
-      </div>
-
-      <div className="section-title">PR 亮點</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-        {highlights.map(pr => (
-          <div key={pr.exercise} className="card" style={{ padding: 14 }}>
-            <div className="pill pr-badge" style={{ display: 'inline-flex', marginBottom: 10 }}>PR</div>
-            <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{pr.exercise}</div>
-            <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 4 }}>{pr.value}</div>
-            <div style={{ fontSize: 12, color: 'var(--orange-d)', fontWeight: 900, marginTop: 6 }}>est. 1RM {pr.estimate}</div>
-          </div>
-        ))}
-        {!highlights.length && <div className="card" style={{ gridColumn: '1 / -1', color: 'var(--ink-3)', fontSize: 13 }}>完成幾次訓練後，這裡會整理你的最佳表現。</div>}
-      </div>
-
-      <div className="section-title">最近訓練</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {groupedRecent.map(day => (
-          <RecentDayCard
-            key={day.date}
-            day={day}
-            open={openDate === day.date}
-            onToggle={() => setOpenDate(openDate === day.date ? null : day.date)}
-            onEdit={() => setOpenDate(day.date)}
-            onDelete={() => deleteRecentDay(day.date)}
-            onRemoveExercise={removeRecentExercise}
-          />
-        ))}
-      </div>
-
-      {showPicker && (
-        <ExercisePickerSheet
-          sessions={sessions}
-          onClose={() => setShowPicker(false)}
-          onDone={(selected, date) => {
-            setShowPicker(false)
-            setTimeout(() => setFillData({ selected, date }), 280)
-          }}
-        />
-      )}
-
-      {fillData && (
-        <SetsFillerSheet
-          selected={fillData.selected}
-          date={fillData.date}
-          sessions={sessions}
-          prototypeOnly={prototypeOnly}
-          onClose={() => setFillData(null)}
-          onSaved={(created) => {
-            if (prototypeOnly && created) setSessions(prev => [created, ...prev])
-            setFillData(null)
-            reload()
-          }}
-        />
-      )}
-
-      {showProfile && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 260, background: 'var(--bg-app)', overflowY: 'auto' }}>
-          <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--line)' }}>
-            <button onClick={() => setShowProfile(false)} style={{ color: 'var(--ink-3)', fontSize: 24 }}>←</button>
-            <div className="display" style={{ fontSize: 18, fontWeight: 900, color: 'var(--ink-1)' }}>個人設定</div>
-          </div>
-          <div style={{ padding: '0 16px 80px' }}>
-            <ProfileScreen session={session} />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function clampTargetDays(value) {
-  return Math.max(1, Math.min(7, Number(value) || 5))
-}
-
-function getSavedTargetDays() {
-  try {
-    const saved = window.localStorage.getItem('fitness-goals')
-    if (!saved) return 5
-    return clampTargetDays(JSON.parse(saved).trainingDays)
-  } catch {
-    return 5
-  }
-}
-
-function MetricCard({ label, value, detail }) {
-  return (
-    <div className="card metric-card" style={{ padding: 14 }}>
-      <div className="metric-label">{label}</div>
-      <div>
-        <div className="metric-value">{value}</div>
-        <div style={{ marginTop: 8, height: 6, borderRadius: 99, background: '#FFE4C4' }}>
-          <div style={{ width: '74%', height: '100%', borderRadius: 99, background: 'linear-gradient(90deg, #FF7A1E, #F43F5E)' }} />
-        </div>
-        <div style={{ color: 'var(--orange-d)', fontSize: 11, fontWeight: 900, marginTop: 6 }}>{detail}</div>
-      </div>
-    </div>
-  )
-}
-
-function WeekStrip({ sessions, todayStr }) {
-  const dates = new Set(sessions.map(s => s.date))
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 7, marginTop: 14 }}>
-      {Array.from({ length: 7 }, (_, i) => {
-        const d = new Date()
-        d.setDate(d.getDate() - (6 - i))
-        const ds = d.toISOString().split('T')[0]
-        const active = dates.has(ds) || [1, 2, 4].includes(i)
-        const isToday = ds === todayStr
-        return (
-          <div key={ds} style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 11, color: isToday ? 'var(--orange-d)' : 'var(--ink-4)', fontWeight: 900 }}>
-              {d.toLocaleDateString('zh-TW', { weekday: 'narrow' })}
+        {!months.length && <div className="empty-history">還沒有訓練紀錄。加入第一個動作，就會開始建立你的日記。</div>}
+        {months.map(month => {
+          const collapsed = Boolean(collapsedMonths[month.key])
+          return (
+            <div className="month-group" key={month.key}>
+              <button className="month-heading" onClick={() => setCollapsedMonths(previous => ({ ...previous, [month.key]: !collapsed }))}>
+                <span>{month.label} · {month.days.length} 次訓練</span>
+                <i>{collapsed ? '⌄' : '⌃'}</i>
+              </button>
+              {!collapsed && month.days.map(day => (
+                <DayCard
+                  key={day.date}
+                  day={day}
+                  open={Boolean(openDays[day.date])}
+                  onToggle={() => setOpenDays(previous => ({ ...previous, [day.date]: !previous[day.date] }))}
+                  onEdit={() => setEditingDay(day)}
+                  onDelete={() => removeDay(day)}
+                />
+              ))}
             </div>
-            <div style={{
-              margin: '6px auto 0', width: 24, height: 24, borderRadius: 99,
-              background: active ? 'linear-gradient(135deg, #FF7A1E, #F43F5E)' : 'var(--bg-sunk)',
-              border: isToday && !active ? '2px solid var(--orange)' : 'none',
-            }} />
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function MuscleRadar({ data }) {
-  const points = data.map((d, i) => {
-    const angle = (-90 + i * 72) * Math.PI / 180
-    const radius = 28 + d.value * 0.38
-    return `${100 + Math.cos(angle) * radius},${100 + Math.sin(angle) * radius}`
-  }).join(' ')
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 14, alignItems: 'center', marginTop: 12 }}>
-      <svg viewBox="0 0 200 200" style={{ width: '100%', maxWidth: 150 }}>
-        {[35, 55, 75].map(r => <circle key={r} cx="100" cy="100" r={r} fill="none" stroke="#FED7AA" strokeWidth="1.5" />)}
-        {data.map((d, i) => {
-          const angle = (-90 + i * 72) * Math.PI / 180
-          return <line key={d.label} x1="100" y1="100" x2={100 + Math.cos(angle) * 78} y2={100 + Math.sin(angle) * 78} stroke="#FDBA74" opacity="0.45" />
+          )
         })}
-        <polygon points={points} fill="rgba(249,115,22,0.2)" stroke="var(--orange)" strokeWidth="3" />
-      </svg>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {data.map(d => (
-          <div key={d.label}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 900, color: 'var(--ink-2)' }}>
-              <span>{d.label}</span><span>{d.sets} 組</span>
-            </div>
-            <div className="progress-track" style={{ height: 6, marginTop: 4 }}>
-              <div className="progress-fill" style={{ width: `${d.value}%` }} />
-            </div>
-          </div>
-        ))}
-      </div>
+      </section>
+
+      {showBuilder && <ExercisePickerSheet sessions={sessions} prototypeOnly={prototypeOnly} onClose={() => setShowBuilder(false)} onSaved={handleCreated} />}
+      {editingDay && (
+        <EditDaySheet
+          day={editingDay}
+          prototypeOnly={prototypeOnly}
+          onClose={() => setEditingDay(null)}
+          onPrototypeSaved={applyPrototypeEdit}
+          onSaved={() => { setEditingDay(null); reload() }}
+        />
+      )}
+      {showProfile && (
+        <div className="profile-overlay">
+          <div className="overlay-toolbar"><button onClick={() => setShowProfile(false)}>←</button><strong>個人設定</strong></div>
+          <ProfileScreen session={session} />
+        </div>
+      )}
     </div>
   )
 }
 
-function RecentDayCard({ day, open, onToggle, onEdit, onDelete, onRemoveExercise }) {
-  const [swipeX, setSwipeX] = useState(0)
-  const [startX, setStartX] = useState(null)
-  const [openExercise, setOpenExercise] = useState(null)
-  const [editing, setEditing] = useState(false)
-  const dateLabel = new Date(day.date + 'T00:00:00').toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
-  const move = (clientX) => {
-    if (startX === null) return
-    const dx = clientX - startX
-    setSwipeX(Math.max(-160, Math.min(0, dx)))
-  }
-  const end = () => {
-    setSwipeX(swipeX < -48 ? -160 : 0)
-    setStartX(null)
-  }
-
-  return (
-    <div className="swipe-row">
-      <div className="swipe-actions">
-        <button className="swipe-edit" onClick={() => { setEditing(true); onEdit(); setSwipeX(0) }}>編輯</button>
-        <button className="swipe-delete" onClick={onDelete}>刪除</button>
-      </div>
-      <div
-        className="card swipe-card"
-        style={{ transform: `translateX(${swipeX}px)`, padding: 15 }}
-        onTouchStart={e => setStartX(e.touches[0].clientX)}
-        onTouchMove={e => move(e.touches[0].clientX)}
-        onTouchEnd={end}
-        onMouseDown={e => setStartX(e.clientX)}
-        onMouseMove={e => e.buttons === 1 && move(e.clientX)}
-        onMouseUp={end}
-        onMouseLeave={() => startX !== null && end()}
-      >
-        <button onClick={onToggle} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left' }}>
-          <ExerciseArt name={day.exercises[0]?.name} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{dateLabel}</div>
-              <div style={{ color: 'var(--ink-4)' }}>{open ? '▲' : '▼'}</div>
-            </div>
-            <div style={{ color: 'var(--ink-1)', fontWeight: 900, marginTop: 5 }}>{day.exercises.map(e => e.name).join(' · ')}</div>
-            <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 3 }}>{day.exercises.length} 個動作 · {day.totalSets} 組</div>
-          </div>
-        </button>
-        {open && (
-          <div style={{ marginTop: 14, borderTop: '1px solid var(--line)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {editing && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 12, background: 'var(--bg-sunk)', color: 'var(--ink-3)', fontSize: 12, fontWeight: 800 }}>
-                <span>點選動作右側刪除即可移除單項運動</span>
-                <button onClick={() => setEditing(false)} style={{ color: 'var(--orange-d)', fontWeight: 900 }}>完成</button>
-              </div>
-            )}
-            {day.exercises.map(ex => (
-              <div key={ex.id}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button onClick={() => setOpenExercise(openExercise === ex.id ? null : ex.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, textAlign: 'left' }}>
-                    <ExerciseArt name={ex.name} small />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{ex.name}</div>
-                      <div style={{ color: 'var(--ink-3)', fontSize: 12 }}>{ex.exercise_sets?.length || 0} 組</div>
-                    </div>
-                    <span style={{ color: 'var(--ink-4)' }}>{openExercise === ex.id ? '收合' : '展開'}</span>
-                  </button>
-                  {editing && (
-                    <button
-                      onClick={() => onRemoveExercise(ex)}
-                      style={{ width: 36, height: 36, borderRadius: 12, background: '#FEE2E2', color: '#DC2626', fontWeight: 900, flexShrink: 0 }}
-                    >
-                      刪
-                    </button>
-                  )}
-                </div>
-                {openExercise === ex.id && (
-                  <div style={{ margin: '8px 0 0 48px', display: 'flex', flexDirection: 'column', gap: 5 }}>
-                    {ex.exercise_sets?.map((set, i) => (
-                      <div key={set.id || i} style={{ color: 'var(--ink-2)', fontSize: 13, fontWeight: 800 }}>
-                        第 {i + 1} 組：{formatSet(set)}
-                      </div>
-                    ))}
-                    {ex.note && <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 3 }}>備註：{ex.note}</div>}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ExerciseArt({ name, small = false }) {
-  const size = small ? 36 : 48
-  const kind = name?.includes('深蹲') ? 'squat' : name?.includes('臥推') ? 'bench' : name?.includes('硬舉') ? 'deadlift' : 'core'
-  return (
-    <div className="icon-tile" style={{ width: size, height: size, borderRadius: small ? 12 : 16 }}>
-      <svg viewBox="0 0 48 48" width={small ? 26 : 32} height={small ? 26 : 32} fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-        {kind === 'squat' && <><path d="M9 15h30"/><path d="M17 15l6 9-5 12"/><path d="M31 15l-6 9 6 12"/><circle cx="24" cy="9" r="4"/></>}
-        {kind === 'bench' && <><path d="M8 31h32"/><path d="M14 25h20"/><path d="M16 18h16"/><path d="M20 18l-4 7"/><path d="M28 18l4 7"/></>}
-        {kind === 'deadlift' && <><path d="M8 34h32"/><path d="M14 28l10-13 10 13"/><path d="M24 15v19"/><circle cx="24" cy="9" r="4"/></>}
-        {kind === 'core' && <><path d="M10 28h28"/><path d="M16 28l8-10 8 10"/><circle cx="24" cy="13" r="4"/></>}
-      </svg>
-    </div>
-  )
-}
-
-function formatSet(set) {
-  if (set.duration_seconds) {
-    const minutes = `${Math.round(set.duration_seconds / 60)} 分`
-    if (set.unit === 'kmh' && set.weight) return `${minutes} · ${set.weight} 速度/等級`
-    if (set.weight) return `${minutes} · ${set.weight}kg`
-    return minutes
-  }
-  return `${set.weight || 0}kg x ${set.reps || 0}`
-}
-
-function groupRecentSessions(sessions, prototypeOnly = false) {
-  const source = sessions.length || !prototypeOnly ? sessions : demoSessions
-  const grouped = {}
-  source.forEach(s => {
-    if (!grouped[s.date]) grouped[s.date] = []
-    grouped[s.date].push(...(s.session_exercises || []).map(ex => ({ ...ex, sessionId: s.id })))
-  })
-  return Object.entries(grouped)
-    .sort(([a], [b]) => b.localeCompare(a))
-    .slice(0, 4)
-    .map(([date, exercises]) => ({
-      date,
-      exercises,
-      totalSets: exercises.reduce((sum, ex) => sum + (ex.exercise_sets?.length || 0), 0),
-    }))
-}
-
-function buildMuscleLoad(sessions) {
-  const buckets = [
-    { label: '胸', keys: ['upper'], value: 0, sets: 0 },
-    { label: '背', keys: ['upper'], value: 0, sets: 0 },
-    { label: '腿', keys: ['lower'], value: 0, sets: 0 },
-    { label: '肩', keys: ['upper'], value: 0, sets: 0 },
-    { label: '核心', keys: ['core'], value: 0, sets: 0 },
+function ActivityRings({ training, protein, calories }) {
+  const rings = [
+    { radius: 66, color: 'var(--pink)', progress: training },
+    { radius: 49, color: 'var(--neon)', progress: protein },
+    { radius: 32, color: 'var(--cyan)', progress: calories },
   ]
-  sessions.forEach(session => session.session_exercises?.forEach(exercise => {
-    const sets = exercise.exercise_sets?.length || 0
-    const name = exercise.name || ''
-    const bucket = exercise.category === 'lower'
-      ? buckets[2]
-      : exercise.category === 'core'
-        ? buckets[4]
-        : name.includes('肩') || name.includes('側平舉')
-          ? buckets[3]
-          : name.includes('背') || name.includes('划') || name.includes('拉')
-            ? buckets[1]
-            : buckets[0]
-    bucket.sets += sets
-  }))
-  const max = Math.max(...buckets.map(item => item.sets), 1)
-  return buckets.map(item => ({ ...item, value: Math.round(item.sets / max * 100) }))
+  return (
+    <svg className="activity-rings" viewBox="0 0 180 180" aria-label="本週與今日活動進度">
+      {rings.map(ring => {
+        const circumference = 2 * Math.PI * ring.radius
+        const progress = Math.max(0.02, Math.min(1, ring.progress || 0))
+        return <g key={ring.radius} transform="rotate(-90 90 90)">
+          <circle cx="90" cy="90" r={ring.radius} fill="none" stroke={ring.color} strokeOpacity=".18" strokeWidth="12" />
+          <circle cx="90" cy="90" r={ring.radius} fill="none" stroke={ring.color} strokeWidth="12" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - progress)} />
+        </g>
+      })}
+    </svg>
+  )
 }
+
+function RingLegend({ color, label, value, target, unit }) {
+  return <div className="ring-legend"><span><i style={{ background: color }} />{label}</span><strong>{value}<small>{target}</small></strong>{unit && <em>{unit}</em>}</div>
+}
+
+function DayCard({ day, open, onToggle, onEdit, onDelete }) {
+  const [translate, setTranslate] = useState(0)
+  const [start, setStart] = useState(null)
+  const date = new Date(`${day.date}T00:00:00`)
+  const categories = [...new Set(day.exercises.map(exercise => CAT_META[exercise.category]?.label).filter(Boolean))]
+  const title = day.name || categories.join(' + ') || '訓練'
+  const move = clientX => start !== null && setTranslate(Math.max(-168, Math.min(0, clientX - start)))
+  const finish = () => { setTranslate(translate < -45 ? -168 : 0); setStart(null) }
+  return (
+    <div className="diary-swipe-row">
+      <div className="diary-swipe-actions"><button onClick={onEdit}>✎<span>編輯</span></button><button onClick={onDelete}>♲<span>刪除</span></button></div>
+      <article className="day-card" style={{ transform: `translateX(${translate}px)` }}
+        onTouchStart={event => setStart(event.touches[0].clientX)} onTouchMove={event => move(event.touches[0].clientX)} onTouchEnd={finish}
+        onMouseDown={event => setStart(event.clientX)} onMouseMove={event => event.buttons === 1 && move(event.clientX)} onMouseUp={finish} onMouseLeave={() => start !== null && finish()}>
+        <button className="day-summary" onClick={onToggle}>
+          <span className="date-block"><strong>{date.getDate()}</strong><small>{date.toLocaleDateString('en-US', { month: 'short' }).toUpperCase()}</small></span>
+          <span className="day-title"><strong>{title}</strong><small>{day.exercises.length} 動作 · {day.totalSets} 組</small></span>
+          <i>{open ? '⌃' : '⌄'}</i>
+        </button>
+        {open && <div className="day-details">
+          {day.exercises.map(exercise => <div key={exercise.id}><span><strong>{exercise.name}</strong>{exercise.note && <small>{exercise.note}</small>}</span><em>{exercise.exercise_sets?.length || 0} 組</em></div>)}
+          <div className="day-detail-actions"><button onClick={onEdit}>編輯紀錄</button><button onClick={onDelete}>刪除</button></div>
+        </div>}
+      </article>
+    </div>
+  )
+}
+
+function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }) {
+  const [date, setDate] = useState(day.date)
+  const [name, setName] = useState(day.name || '')
+  const [exercises, setExercises] = useState(() => day.exercises.map(exercise => ({
+    ...exercise,
+    open: false,
+    removed: false,
+    sets: (exercise.exercise_sets || []).map(set => ({ ...set })),
+  })))
+  const [saving, setSaving] = useState(false)
+
+  const updateExerciseSet = (exerciseId, index, field, value) => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : {
+    ...exercise,
+    sets: exercise.sets.map((set, setIndex) => setIndex === index ? { ...set, [field]: value } : set),
+  }))
+  const addExerciseSet = exerciseId => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : { ...exercise, sets: [...exercise.sets, { id: null, weight: '', reps: '', order_index: exercise.sets.length }] }))
+  const removeExerciseSet = (exerciseId, index) => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : { ...exercise, sets: exercise.sets.filter((_, setIndex) => setIndex !== index) }))
+
+  const save = async () => {
+    setSaving(true)
+    const output = { sessionIds: day.sessions.map(item => item.id), date, name, exercises: exercises.filter(item => !item.removed) }
+    if (prototypeOnly) { onPrototypeSaved(output); return }
+    try {
+      for (const workout of day.sessions) {
+        const result = await updateSession(workout.id, { date, name: name || '訓練' })
+        if (result.error) throw result.error
+      }
+      for (const exercise of exercises) {
+        if (exercise.removed) {
+          const result = await deleteExercise(exercise.id)
+          if (result.error) throw result.error
+          continue
+        }
+        const exerciseResult = await updateExercise(exercise.id, { note: exercise.note || null })
+        if (exerciseResult.error) throw exerciseResult.error
+        const originalIds = new Set((exercise.exercise_sets || []).map(set => set.id))
+        const retainedIds = new Set(exercise.sets.map(set => set.id).filter(Boolean))
+        for (const removed of (exercise.exercise_sets || []).filter(set => originalIds.has(set.id) && !retainedIds.has(set.id))) {
+          const result = await deleteSet(removed.id)
+          if (result.error) throw result.error
+        }
+        for (let index = 0; index < exercise.sets.length; index += 1) {
+          const set = exercise.sets[index]
+          const payload = { order_index: index, weight: Number(set.weight) || null, reps: Number(set.reps) || null }
+          const result = set.id ? await updateSet(set.id, payload) : await createSet({ ...payload, exercise_id: exercise.id })
+          if (result.error) throw result.error
+        }
+      }
+      onSaved()
+    } catch (error) {
+      alert(`儲存失敗：${error.message || '請稍後再試'}`)
+      setSaving(false)
+    }
+  }
+
+  return <div className="edit-backdrop" onClick={event => event.target === event.currentTarget && onClose()}>
+    <section className="edit-sheet">
+      <div className="sheet-handle" />
+      <header><h2>編輯訓練紀錄</h2><button onClick={onClose}>×</button></header>
+      <label><span>日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
+      <label><span>訓練名稱 / 部位</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：有氧 + 下肢" /></label>
+      <div className="edit-list-label">動作清單</div>
+      <div className="edit-exercise-list">
+        {exercises.map(exercise => !exercise.removed && <div className="edit-exercise" key={exercise.id}>
+          <button className="edit-exercise-row" onClick={() => setExercises(previous => previous.map(item => item.id === exercise.id ? { ...item, open: !item.open } : item))}>
+            <strong>{exercise.name}</strong><span>{exercise.sets.length} 組</span><i>›</i>
+          </button>
+          <button className="remove-exercise" onClick={() => setExercises(previous => previous.map(item => item.id === exercise.id ? { ...item, removed: true } : item))}>×</button>
+          {exercise.open && <div className="edit-sets">
+            <div className="edit-set-head"><span /><span>KG</span><span>次</span><span /></div>
+            {exercise.sets.map((set, index) => <div className="edit-set-row" key={set.id || index}>
+              <span>{index + 1}</span>
+              <input type="number" value={set.weight ?? ''} onChange={event => updateExerciseSet(exercise.id, index, 'weight', event.target.value)} />
+              <input type="number" value={set.reps ?? ''} onChange={event => updateExerciseSet(exercise.id, index, 'reps', event.target.value)} />
+              <button onClick={() => removeExerciseSet(exercise.id, index)}>×</button>
+            </div>)}
+            <button className="edit-add-set" onClick={() => addExerciseSet(exercise.id)}>+ 加一組</button>
+            <textarea value={exercise.note || ''} onChange={event => setExercises(previous => previous.map(item => item.id === exercise.id ? { ...item, note: event.target.value } : item))} placeholder="備註（選填）" />
+          </div>}
+        </div>)}
+      </div>
+      <p className="edit-hint">點動作可修改組數細節，點 × 可移除單一動作</p>
+      <button className="neon-button save-edit" onClick={save} disabled={saving}>{saving ? '儲存中…' : '儲存變更'}</button>
+    </section>
+  </div>
+}
+
+function UserIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="3.5" /><path d="M5.5 20c.6-4 2.7-6 6.5-6s5.9 2 6.5 6" /></svg> }
+
+function groupByDay(sessions) {
+  const grouped = {}
+  sessions.forEach(workout => {
+    if (!grouped[workout.date]) grouped[workout.date] = { date: workout.date, sessions: [], exercises: [], names: [] }
+    grouped[workout.date].sessions.push(workout)
+    grouped[workout.date].names.push(workout.name)
+    grouped[workout.date].exercises.push(...(workout.session_exercises || []).map(exercise => ({ ...exercise, sessionId: workout.id })))
+  })
+  return Object.values(grouped).sort((a, b) => b.date.localeCompare(a.date)).map(day => ({
+    ...day,
+    name: [...new Set(day.names.filter(Boolean))].join(' + '),
+    totalSets: day.exercises.reduce((total, exercise) => total + (exercise.exercise_sets?.length || 0), 0),
+  }))
+}
+
+function groupByMonth(days) {
+  const grouped = {}
+  days.forEach(day => {
+    const key = day.date.slice(0, 7)
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(day)
+  })
+  return Object.entries(grouped).sort(([a], [b]) => b.localeCompare(a)).map(([key, monthDays]) => ({
+    key,
+    label: `${Number(key.slice(0, 4))} 年 ${Number(key.slice(5, 7))} 月`,
+    days: monthDays,
+  }))
+}
+
+function getCurrentWeek(today) {
+  const monday = new Date(today)
+  const day = monday.getDay() || 7
+  monday.setDate(monday.getDate() - day + 1)
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + index)
+    return { date: isoDate(date), weekday: ['一', '二', '三', '四', '五', '六', '日'][index], day: date.getDate() }
+  })
+}
+
+function readTargetDays() {
+  try { return Number(JSON.parse(localStorage.getItem('fitness-goals'))?.trainingDays) || 3 } catch { return 3 }
+}
+
+function formatDate(value) { return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' }) }
