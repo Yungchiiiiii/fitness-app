@@ -263,7 +263,7 @@ function AddMealSheet({ onClose, onAdd }) {
 
   return (
     <div className="sheet-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="sheet-panel">
+      <div className="sheet-panel meal-sheet">
         <div style={{ width: 36, height: 4, borderRadius: 99, background: 'var(--line-strong)', margin: '0 auto 18px' }} />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
@@ -277,8 +277,8 @@ function AddMealSheet({ onClose, onAdd }) {
           {['quick', 'manual', 'photo'].map(key => (
             <button key={key} onClick={() => setMode(key)} className="pill" style={{
               padding: '10px 8px',
-              color: mode === key ? '#fff' : 'var(--ink-3)',
-              background: mode === key ? 'var(--orange)' : '#fff',
+              color: mode === key ? '#050505' : '#F7F7F8',
+              background: mode === key ? 'var(--neon)' : '#2C2C2E',
               boxShadow: 'var(--shadow-sm)',
             }}>
               {key === 'quick' ? '常吃' : key === 'manual' ? '手動' : '拍照'}
@@ -289,7 +289,7 @@ function AddMealSheet({ onClose, onAdd }) {
         {mode === 'quick' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 16 }}>
             {frequentFoods.map(food => (
-              <button key={food.name} onClick={() => onAdd({ ...food, source: 'quick' })} className="card" style={{ padding: 13, textAlign: 'left' }}>
+              <button key={food.name} onClick={() => onAdd({ ...food, source: 'quick' })} className="card meal-quick-card" style={{ padding: 13, textAlign: 'left' }}>
                 <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{food.name}</div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 4 }}>{food.meal} · {food.kcal} kcal</div>
                 <div style={{ color: 'var(--orange-d)', fontSize: 12, fontWeight: 900, marginTop: 5 }}>P {food.protein}g</div>
@@ -335,7 +335,7 @@ function AddMealSheet({ onClose, onAdd }) {
               overflow: 'hidden',
               display: 'grid',
               placeItems: 'center',
-              background: photoPreview ? `center / cover no-repeat url(${photoPreview})` : '#fff',
+              background: photoPreview ? `center / cover no-repeat url(${photoPreview})` : '#2C2C2E',
             }}>
               {photoPreview ? (
                 <div style={{ alignSelf: 'end', width: '100%', padding: '44px 16px 14px', color: '#fff', background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.58))' }}>

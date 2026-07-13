@@ -127,15 +127,9 @@ export default function CoachScreen({ session }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginTop: 10, paddingBottom: 4 }}>
+      <div className="coach-quick-prompts">
         {quickPrompts.map(prompt => (
-          <button key={prompt} onClick={() => ask(prompt)} className="pill" style={{
-            whiteSpace: 'nowrap',
-            color: 'var(--orange-d)',
-            background: '#fff',
-            boxShadow: 'var(--shadow-sm)',
-            padding: '9px 12px',
-          }}>
+          <button key={prompt} onClick={() => ask(prompt)} className="pill coach-quick-prompt">
             {prompt}
           </button>
         ))}
