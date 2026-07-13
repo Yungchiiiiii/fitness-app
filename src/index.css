@@ -812,8 +812,24 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .photo-source-grid span { font-weight: 900; }
 .photo-source-grid small { color: #aaaab0; font-size: 11px; }
 .photo-source-grid input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.coach-quick-prompts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-bottom: 4px; overflow: hidden; }
-.coach-quick-prompt { color: #F7F7F8; background: #242426; border: 1px solid rgba(166,255,50,.28); box-shadow: none; padding: 10px 13px; white-space: normal; text-align: left; line-height: 1.35; }
+.coach-screen { height: calc(100dvh - var(--tab-h) - var(--safe-bottom) - 24px); min-height: 460px; display: grid; grid-template-rows: auto minmax(0,1fr) auto; gap: 10px; }
+.coach-header { padding: 6px 2px 2px; }
+.coach-header .display { color: var(--ink-1); font-size: 27px; font-weight: 950; }
+.coach-header span { display: block; color: var(--ink-3); font-size: 12px; margin-top: 3px; }
+.coach-conversation { min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px; padding: 14px 10px 18px; border: 1px solid rgba(255,255,255,.1); border-radius: 22px; background: rgba(20,20,22,.88); scroll-behavior: smooth; }
+.coach-message { max-width: 92%; padding: 12px 14px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.coach-message.user { align-self: flex-end; border-radius: 18px 18px 5px 18px; background: linear-gradient(135deg,#ff7a1e,#f43f5e); color: #fff; font-weight: 800; white-space: pre-wrap; }
+.coach-message.coach { align-self: flex-start; border-radius: 18px 18px 18px 5px; background: #29292c; color: #f0f0f2; }
+.coach-message.thinking { color: var(--ink-3); }
+.coach-reply-block + .coach-reply-block { margin-top: 12px; }
+.coach-reply-item + .coach-reply-item { margin-top: 7px; }
+.coach-quick-prompts { display: grid; gap: 8px; margin-top: 4px; }
+.coach-quick-prompt { color: #f7f7f8; background: #242426; border: 1px solid rgba(166,255,50,.28); border-radius: 14px; padding: 11px 13px; text-align: left; line-height: 1.4; font-weight: 800; }
+.coach-composer { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 8px; border: 1px solid rgba(255,255,255,.12); border-radius: 18px; background: #1d1d1f; }
+.coach-composer textarea { min-width: 0; max-height: 96px; resize: none; border: 0; outline: 0; border-radius: 12px; background: #29292c; color: #fff; padding: 12px 13px; font: inherit; line-height: 1.4; }
+.coach-composer textarea::placeholder { color: #77777d; }
+.coach-composer button { min-width: 58px; border-radius: 13px; background: var(--neon); color: #080808; font-weight: 950; }
+.coach-composer button:disabled { opacity: .38; }
 
 @media (max-width: 600px) {
   html, body, #root { font-size: 14px; }

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { askCoachWithAI } from '../lib/ai'
 import { getDailyNutrition, getFoodLogs, getProfile, getRecoveryLogs, getSessions, getWeightLogs } from '../lib/db'
-import { aiSuggestions, demoSessions, macroSnapshot, mealCalendar, painLogs, weightLogs } from '../lib/prototypeData'
+import { demoSessions, macroSnapshot, mealCalendar, painLogs, weightLogs } from '../lib/prototypeData'
 
 const quickPrompts = ['今天肩膀不舒服，怎麼練胸？', '最近力量有點掉，飲食要調嗎？', '幫我排明天 45 分鐘訓練']
 
@@ -13,6 +13,7 @@ export default function CoachScreen({ session }) {
   ])
   const [thinking, setThinking] = useState(false)
   const [contextData, setContextData] = useState(() => buildCoachContext())
+  const messageEndRef = useRef(null)
 
   useEffect(() => {
     if (prototypeOnly || !session?.user?.id) return undefined
@@ -39,6 +40,10 @@ export default function CoachScreen({ session }) {
     return () => { cancelled = true }
   }, [prototypeOnly, session?.user?.id])
 
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages, thinking])
+
   const context = contextData || buildCoachContext()
 
   const ask = async (prompt = text) => {
@@ -58,100 +63,70 @@ export default function CoachScreen({ session }) {
   }
 
   return (
-    <div className="screen-fade" style={{ paddingBottom: 116 }}>
-      <div style={{ padding: '8px 4px 4px' }}>
-        <div className="display" style={{ fontSize: 30, fontWeight: 900, color: 'var(--ink-1)' }}>AI 教練</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>會參考訓練、飲食、恢復與體重資料回答</div>
-      </div>
+    <div className="coach-screen screen-fade">
+      <header className="coach-header">
+        <div className="display">AI 教練</div>
+        <span>會參考你的訓練、飲食、恢復與體重資料</span>
+      </header>
 
-      <div className="card" style={{ marginTop: 14, background: 'linear-gradient(135deg, #FF7A1E, #F43F5E)', color: '#fff' }}>
-        <div style={{ fontSize: 12, fontWeight: 900, opacity: 0.84 }}>今日判讀</div>
-        <div className="display" style={{ fontSize: 22, fontWeight: 900, marginTop: 6 }}>肩膀保守，碳水靠近訓練</div>
-        <div style={{ fontSize: 13, lineHeight: 1.5, opacity: 0.88, marginTop: 8 }}>
-          左肩 4/10，今天推的動作先保守；蛋白質接近達標，訓練後補一點碳水。
-        </div>
-      </div>
-
-      <div className="section-title">教練建議</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {aiSuggestions.map(item => (
-          <div key={item.title} className="card" style={{ padding: 15 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{item.title}</div>
-              <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>AI</span>
-            </div>
-            <div style={{ color: 'var(--ink-3)', fontSize: 13, lineHeight: 1.55, marginTop: 8 }}>{item.body}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="section-title">{prototypeOnly ? '讀取中的模擬資料' : '讀取中的雲端資料'}</div>
-      <div className="card" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <ContextChip label="不適標記" value={context.painLogs[0] ? `${context.painLogs[0].bodyPart || context.painLogs[0].body_part} ${context.painLogs[0].intensity}/10` : '目前沒有'} tone="red" />
-        <ContextChip label="蛋白質" value={`${context.macroSnapshot.protein.value}/${context.macroSnapshot.protein.target}g`} tone="orange" />
-        <ContextChip label="體重趨勢" value={context.weightTrend.start ? `${context.weightTrend.start.weight} -> ${context.weightTrend.latest.weight}kg` : '尚無紀錄'} tone="green" />
-        <ContextChip label="訓練策略" value={context.painLogs.length ? '依不適調整' : '維持漸進'} tone="amber" />
-      </div>
-
-      <div className="section-title">對話</div>
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, minHeight: 210 }}>
+      <div className="coach-conversation">
         {messages.map((m, idx) => (
-          <div key={idx} style={{
-            alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
-            maxWidth: '88%',
-            padding: '11px 13px',
-            borderRadius: m.role === 'user' ? '16px 16px 5px 16px' : '16px 16px 16px 5px',
-            background: m.role === 'user' ? 'linear-gradient(135deg, #FF7A1E, #F43F5E)' : 'var(--bg-sunk)',
-            color: m.role === 'user' ? '#fff' : 'var(--ink-2)',
-            fontSize: 13,
-            lineHeight: 1.45,
-            fontWeight: 750,
-          }}>
-            {m.text}
+          <div key={idx} className={`coach-message ${m.role}`}>
+            {m.role === 'coach' ? <FormattedCoachReply text={m.text} /> : m.text}
           </div>
         ))}
         {thinking && (
-          <div style={{
-            alignSelf: 'flex-start',
-            maxWidth: '88%',
-            padding: '11px 13px',
-            borderRadius: '16px 16px 16px 5px',
-            background: 'var(--bg-sunk)',
-            color: 'var(--ink-3)',
-            fontSize: 13,
-            lineHeight: 1.45,
-            fontWeight: 750,
-          }}>
+          <div className="coach-message coach thinking">
             AI 正在整理你的資料...
+          </div>
+        )}
+        <div ref={messageEndRef} />
+
+        {messages.length === 1 && (
+          <div className="coach-quick-prompts">
+            {quickPrompts.map(prompt => (
+              <button key={prompt} onClick={() => ask(prompt)} className="coach-quick-prompt">
+                {prompt}
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      <div className="coach-quick-prompts">
-        {quickPrompts.map(prompt => (
-          <button key={prompt} onClick={() => ask(prompt)} className="pill coach-quick-prompt">
-            {prompt}
-          </button>
-        ))}
-      </div>
-
-      <div style={{
-        position: 'fixed',
-        left: 0,
-        right: 0,
-        bottom: 'calc(var(--tab-h) + var(--safe-bottom) + 8px)',
-        zIndex: 120,
-        padding: '0 16px',
-        maxWidth: 520,
-        margin: '0 auto',
-      }}>
-        <div className="card" style={{ padding: 8, display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, borderRadius: 18 }}>
-          <input className="inp" placeholder="直接問 AI：訓練、飲食、恢復..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && ask()} />
-          <button className="btn-primary" style={{ width: 52, padding: 0 }} disabled={thinking} onClick={() => ask()}>{thinking ? '...' : '送出'}</button>
-        </div>
+      <div className="coach-composer">
+        <textarea rows="1" placeholder="直接問 AI：訓練、飲食、恢復..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            ask()
+          }
+        }} />
+        <button disabled={thinking || !text.trim()} onClick={() => ask()}>{thinking ? '…' : '送出'}</button>
       </div>
     </div>
   )
+}
+
+function formatCoachReply(text = '') {
+  return String(text)
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+([1-9][.、）)])/g, '\n$1')
+    .replace(/[ \t]+([•●▪︎-])\s+/g, '\n$1 ')
+    .replace(/([^\n])\s*(總結|提醒|注意|建議)[:：]/g, '$1\n\n$2：')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function FormattedCoachReply({ text }) {
+  const blocks = formatCoachReply(text).split(/\n{2,}/)
+  return blocks.map((block, blockIndex) => (
+    <div className="coach-reply-block" key={`${blockIndex}-${block.slice(0, 12)}`}>
+      {block.split('\n').filter(Boolean).map((line, lineIndex) => (
+        <div className={/^(?:[1-9][.、）)]|[•●▪︎-])/.test(line.trim()) ? 'coach-reply-item' : ''} key={`${lineIndex}-${line.slice(0, 12)}`}>
+          {line.trim()}
+        </div>
+      ))}
+    </div>
+  ))
 }
 
 function buildCoachContext() {
@@ -205,26 +180,10 @@ function buildBackendCoachContext({ sessions, nutrition, meals, weights, recover
 
 function buildReply(prompt, reason = '') {
   if (prompt.includes('腳') || prompt.includes('翻船') || prompt.includes('扭')) {
-    return `目前 AI API ${reason ? `暫時不可用（${reason}）` : '暫時不可用'}，先給你保守建議：如果右腳踝剛翻船，前 24-48 小時先減少跑跳與下肢負重，冰敷 10-15 分鐘、一天 2-4 次，抬高休息。若明顯腫脹、瘀青、無法承重或疼痛加劇，請看醫師或物理治療師。疼痛下降後再做腳踝畫圈、彈力帶外翻/內翻、單腳平衡，循序回到訓練。`
+    return `目前 AI API ${reason ? `暫時不可用（${reason}）` : '暫時不可用'}，先給你保守建議：\n\n1. 前 24–48 小時先減少跑跳與下肢負重。\n2. 冰敷 10–15 分鐘，一天 2–4 次，並把腳抬高休息。\n3. 若明顯腫脹、瘀青、無法承重或疼痛加劇，請看醫師或物理治療師。\n4. 疼痛下降後，再循序做腳踝畫圈、彈力帶外翻／內翻與單腳平衡。`
   }
-  if (prompt.includes('肩')) return '今天胸部訓練建議用滑輪夾胸 3 組、機械胸推 2 組，RPE 控制在 6-7。只要痛感超過 5/10 就停止，別硬推重量。'
-  if (prompt.includes('飲食') || prompt.includes('力量')) return '力量掉一點但體重也在下降，先不要再減熱量。訓練日前後加 20-30g 碳水，蛋白質維持每公斤 1.6-2g。'
-  if (prompt.includes('明天')) return '明天做 45 分鐘下肢與核心：深蹲 3 組、腿推 3 組、腿彎舉 2 組、棒式 3 段。組間休息 90 秒。'
+  if (prompt.includes('肩')) return '1. 滑輪夾胸 3 組。\n2. 機械胸推 2 組，RPE 控制在 6–7。\n3. 痛感超過 5/10 就停止，不要硬推重量。'
+  if (prompt.includes('飲食') || prompt.includes('力量')) return '1. 先不要再降低熱量。\n2. 訓練日前後增加 20–30g 碳水。\n3. 蛋白質維持每公斤體重 1.6–2g。'
+  if (prompt.includes('明天')) return '1. 深蹲 3 組。\n2. 腿推 3 組。\n3. 腿彎舉 2 組。\n4. 棒式 3 段。\n\n組間休息約 90 秒，總時間控制在 45 分鐘。'
   return '我會先看你的目標、最近重量變化和飲食紀錄。以現在狀態來說，建議維持熱量，不急著減脂，把訓練品質和恢復拉穩。'
-}
-
-function ContextChip({ label, value, tone }) {
-  const styles = {
-    red: ['#FEE2E2', '#DC2626'],
-    orange: ['#FFEDD5', '#EA580C'],
-    green: ['#DCFCE7', '#15803D'],
-    amber: ['#FEF3C7', '#B45309'],
-  }
-  const [bg, color] = styles[tone]
-  return (
-    <div style={{ background: bg, color, borderRadius: 14, padding: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.75 }}>{label}</div>
-      <div style={{ fontSize: 13, fontWeight: 900, marginTop: 4 }}>{value}</div>
-    </div>
-  )
 }

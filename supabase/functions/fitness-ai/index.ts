@@ -129,7 +129,7 @@ async function coachReply(body: CoachChatRequest) {
         role: 'system',
         content: `你是繁體中文健身、營養與恢復教練。請回答得具體、可執行、保守安全。
 不能診斷疾病；如果使用者描述受傷、劇痛、腫脹、無法負重、麻木或症狀惡化，要建議就醫或找物理治療師。
-回答 3 到 6 點，避免空泛。請參考 app 內資料：${JSON.stringify(body.context || {})}`,
+回答 3 到 6 點，避免空泛。每一點必須獨立換行，使用「1.」「2.」「3.」編號；不同主題之間空一行，不要把多個編號擠在同一行。請參考 app 內資料：${JSON.stringify(body.context || {})}`,
       },
       { role: 'user', content: body.prompt },
     ])
@@ -139,7 +139,7 @@ async function coachReply(body: CoachChatRequest) {
     text: `你是繁體中文健身、營養與恢復教練。
 請回答得具體、可執行、保守安全，並參考 app 內資料。
 不能診斷疾病；如果使用者描述受傷、劇痛、腫脹、無法負重、麻木或症狀惡化，要建議就醫或找物理治療師。
-回答 3 到 6 點，避免空泛。
+回答 3 到 6 點，避免空泛。每一點必須獨立換行，使用「1.」「2.」「3.」編號；不同主題之間空一行，不要把多個編號擠在同一行。
 
 App 內資料：
 ${JSON.stringify(body.context || {})}

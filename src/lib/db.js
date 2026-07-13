@@ -9,7 +9,7 @@ export const getProfile = (userId) =>
     .single()
 
 export const upsertProfile = (profile) =>
-  supabase.from('profiles').upsert(profile).select().single()
+  supabase.from('profiles').upsert(profile, { onConflict: 'id' })
 
 // ── Workout Sessions ──────────────────────────────────
 export const getSessions = (userId) =>

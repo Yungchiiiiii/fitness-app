@@ -95,6 +95,9 @@ export default function ProfileScreen({ session }) {
   const handleSaveGoals = async (next) => {
     const normalized = { ...next, trainingDays: clampTrainingDays(next.trainingDays) }
     setError('')
+    saveGoals(normalized, session.user.id)
+    setGoals(normalized)
+    setShowGoals(false)
     if (!session?.prototype) {
       const { error: saveError } = await upsertProfile({
         id: session.user.id,
@@ -112,10 +115,14 @@ export default function ProfileScreen({ session }) {
         setError(`儲存目標失敗：${saveError.message}`)
         throw saveError
       }
+
+      const { data: savedProfile, error: verifyError } = await getProfile(session.user.id)
+      if (verifyError || !savedProfile) {
+        const message = verifyError?.message || '雲端沒有回傳已儲存的目標'
+        setError(`目標已保存在這台裝置，但雲端同步失敗：${message}`)
+        throw new Error(message)
+      }
     }
-    saveGoals(normalized, session.user.id)
-    setGoals(normalized)
-    setShowGoals(false)
   }
 
   return (
