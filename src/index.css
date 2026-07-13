@@ -766,20 +766,42 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .training-picker .picker-exercise.active { background: rgba(166,255,50,.13); outline: 2px solid rgba(166,255,50,.5); }
 .training-picker .picker-exercise.active span:last-child { color: var(--neon); font-size: 12px; }
 
-.cloud-boot { min-height: 100%; display: grid; place-content: center; justify-items: center; gap: 13px; padding: 28px; text-align: center; background: #000; }
-.cloud-boot img { width: 82px; height: 82px; border-radius: 20px; }
-.cloud-boot strong { font-size: 21px; }
-.cloud-boot span { color: #aaaab0; max-width: 340px; line-height: 1.55; }
-.cloud-primary { margin-top: 8px; padding: 14px 20px; }
-.cloud-secondary { color: #d1d1d6; padding: 10px 14px; text-decoration: underline; text-underline-offset: 4px; }
-.cloud-restore-form { width: min(360px, 88vw); display: grid; gap: 12px; justify-items: stretch; }
-.cloud-restore-form input { width: 100%; border: 1px solid #3a3a3c; border-radius: 14px; background: #1c1c1e; color: #fff; padding: 14px; font-size: 16px; outline: 0; }
-.cloud-restore-form p { color: var(--neon); font-size: 13px; line-height: 1.5; }
+.cloud-boot { min-height: 100%; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom)); background: radial-gradient(circle at 50% 8%, #242426 0, #0a0a0b 35%, #000 72%); overflow-y: auto; }
+.cloud-boot-card { width: min(420px, 100%); display: grid; justify-items: stretch; gap: 18px; padding: 28px 24px 22px; border: 1px solid rgba(255,255,255,.12); border-radius: 30px; background: rgba(21,21,23,.9); box-shadow: 0 26px 80px rgba(0,0,0,.58); backdrop-filter: blur(24px); }
+.cloud-boot .cloud-logo { width: 112px; height: 112px; justify-self: center; border-radius: 26px; object-fit: cover; box-shadow: 0 12px 34px rgba(0,0,0,.4); }
+.cloud-copy { display: grid; justify-items: center; gap: 8px; text-align: center; }
+.cloud-copy .cloud-kicker { color: var(--neon); font-size: 10px; font-weight: 950; letter-spacing: 1.7px; }
+.cloud-copy strong { color: #fff; font-size: 27px; font-weight: 950; letter-spacing: -.7px; }
+.cloud-copy > span:last-child { color: #aaaab0; max-width: 340px; font-size: 13px; line-height: 1.6; }
+.cloud-benefits { display: grid; gap: 9px; padding: 4px 0; }
+.cloud-benefits > div { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 15px; background: #202023; text-align: left; }
+.cloud-benefits i { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 9px; background: rgba(166,255,50,.12); color: var(--neon); font-size: 10px; font-style: normal; font-weight: 950; }
+.cloud-benefits span { display: grid; gap: 2px; }
+.cloud-benefits b { color: #f7f7f8; font-size: 13px; }
+.cloud-benefits small { color: #8e8e93; font-size: 11px; font-weight: 700; }
+.auth-field { display: grid; gap: 7px; color: #c7c7cc; font-size: 11px; font-weight: 900; text-align: left; }
+.auth-field input { width: 100%; min-height: 52px; border: 1px solid rgba(255,255,255,.14); border-radius: 15px; outline: 0; background: #202023; color: #fff; padding: 0 15px; font-size: 16px; }
+.auth-field input:focus { border-color: rgba(166,255,50,.55); box-shadow: 0 0 0 3px rgba(166,255,50,.1); }
+.auth-field input::placeholder { color: #626268; }
+.otp-field input { height: 66px; text-align: center; font-size: 30px; font-weight: 950; letter-spacing: 12px; padding-left: 27px; }
+.email-auth-button { min-height: 54px; display: flex; align-items: center; justify-content: center; border-radius: 16px; background: var(--neon); color: #080808; font-size: 15px; font-weight: 950; box-shadow: 0 10px 28px rgba(0,0,0,.28); }
+.email-auth-button:active { transform: scale(.985); }
+.email-auth-button:disabled { opacity: .42; }
+.existing-account-button { min-height: 44px; border: 1px solid rgba(166,255,50,.38); border-radius: 14px; color: var(--neon); font-size: 13px; }
+.existing-account-button:disabled { opacity: .45; }
+.auth-code-actions { display: flex; justify-content: center; gap: 22px; }
+.auth-code-actions button { color: #c7c7cc; font-size: 12px; padding: 4px; text-decoration: underline; text-underline-offset: 4px; }
+.auth-code-actions button:disabled { opacity: .45; }
+.cloud-account-hint { margin-top: -8px; color: #77777d; font-size: 11px; line-height: 1.5; text-align: center; }
+.cloud-message { padding: 11px 12px; border-radius: 12px; font-size: 12px; line-height: 1.5; text-align: center; }
+.cloud-message.success { background: rgba(166,255,50,.1); color: var(--neon); }
+.cloud-message.error { background: rgba(255,23,79,.12); color: #ff8aa5; }
 .account-recovery-card { display: grid; gap: 10px; }
 .account-recovery-card > strong { color: var(--ink-1); font-size: 16px; }
 .account-recovery-card p { color: var(--ink-3); font-size: 13px; line-height: 1.55; }
 .account-recovery-card > span { color: var(--orange-d); font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
 .account-recovery-message { line-height: 1.5; }
+.account-signout { justify-self: start; color: #ff6961; font-size: 13px; padding: 6px 0; }
 .goal-save-error { margin-top: 10px; color: #ff6961; font-size: 13px; line-height: 1.45; }
 
 .meal-sheet .meal-quick-card { background: #242426; border-color: rgba(255,255,255,.12); box-shadow: none; }

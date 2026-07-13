@@ -15,33 +15,31 @@ const initialGoals = {
 }
 
 const clampTrainingDays = (value) => Math.max(1, Math.min(7, Number(value) || 1))
-const loadGoals = () => {
+const goalStorageKey = userId => `fitness-goals:${userId}`
+const loadGoals = (userId) => {
   try {
-    const saved = window.localStorage.getItem('fitness-goals')
+    const saved = window.localStorage.getItem(goalStorageKey(userId))
     if (!saved) return initialGoals
     return { ...initialGoals, ...JSON.parse(saved) }
   } catch {
     return initialGoals
   }
 }
-const saveGoals = (goals) => {
+const saveGoals = (goals, userId) => {
   const normalized = { ...goals, trainingDays: clampTrainingDays(goals.trainingDays) }
-  window.localStorage.setItem('fitness-goals', JSON.stringify(normalized))
+  window.localStorage.setItem(goalStorageKey(userId), JSON.stringify(normalized))
   window.dispatchEvent(new CustomEvent('fitness-goals-updated', { detail: normalized }))
   return normalized
 }
 
 export default function ProfileScreen({ session }) {
-  const name = session?.user?.user_metadata?.name || '使用者'
+  const name = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || '使用者'
   const [weeklyWeight, setWeeklyWeight] = useState('60.0')
   const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
   const [recovery, setRecovery] = useState(painLogs)
-  const [goals, setGoals] = useState(loadGoals)
+  const [goals, setGoals] = useState(() => loadGoals(session.user.id))
   const [showGoals, setShowGoals] = useState(false)
   const [error, setError] = useState('')
-  const [syncEmail, setSyncEmail] = useState(session?.user?.email || '')
-  const [syncingEmail, setSyncingEmail] = useState(false)
-  const [syncMessage, setSyncMessage] = useState('')
   const targetText = goals.targets?.join('、') || '尚未選擇目標'
 
   useEffect(() => {
@@ -115,23 +113,9 @@ export default function ProfileScreen({ session }) {
         throw saveError
       }
     }
-    saveGoals(normalized)
+    saveGoals(normalized, session.user.id)
     setGoals(normalized)
     setShowGoals(false)
-  }
-
-  const linkRecoveryEmail = async () => {
-    if (!syncEmail.trim() || syncingEmail) return
-    setSyncingEmail(true)
-    setSyncMessage('')
-    const { error: updateError } = await supabase.auth.updateUser(
-      { email: syncEmail.trim() },
-      { emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}` },
-    )
-    setSyncMessage(updateError
-      ? `綁定失敗：${updateError.message}`
-      : '確認信已寄出。請到信箱點開連結，完成後即使刪除捷徑也能找回資料。')
-    setSyncingEmail(false)
   }
 
   return (
@@ -153,24 +137,17 @@ export default function ProfileScreen({ session }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 900, fontSize: 17, color: 'var(--ink-1)' }}>{name}</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>{session?.user?.is_anonymous ? '雲端匿名模式 · 建議綁定信箱' : `雲端同步 · ${session?.user?.email || '已綁定'}`}</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>{`Email 雲端同步 · ${session?.user?.email || '已綁定'}`}</div>
         </div>
         <span className="pill" style={{ color: 'var(--orange-d)', background: '#FFEDD5' }}>PWA</span>
       </div>
 
-      <div className="section-title">資料復原</div>
+      <div className="section-title">Email 帳號</div>
       <div className="card account-recovery-card">
-        {!session?.user?.is_anonymous ? <>
-          <strong>這份資料已可跨裝置找回</strong>
-          <p>刪除桌面捷徑後重新加入時，選「用信箱找回」即可連回同一份紀錄。</p>
-          <span>{session?.user?.email}</span>
-        </> : <>
-          <strong>綁定信箱，避免捷徑刪除後遺失連線</strong>
-          <p>不用設定密碼；之後會寄一封登入連結到你的信箱。</p>
-          <input className="inp" type="email" inputMode="email" autoComplete="email" placeholder="你的 Email" value={syncEmail} onChange={event => setSyncEmail(event.target.value)} />
-          <button className="btn-primary" disabled={!syncEmail.trim() || syncingEmail} onClick={linkRecoveryEmail}>{syncingEmail ? '寄送中…' : '寄確認信並綁定'}</button>
-          {syncMessage && <span className="account-recovery-message">{syncMessage}</span>}
-        </>}
+        <strong>帳號已綁定，資料會自動同步</strong>
+        <p>你的目標、訓練與飲食資料會依這個帳號分開儲存。換裝置時用同一個 Email 收取驗證碼即可。</p>
+        <span>{session?.user?.email}</span>
+        <button className="account-signout" onClick={() => supabase.auth.signOut()}>登出這個帳號</button>
       </div>
 
       <div className="section-title">每週體重</div>

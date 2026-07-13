@@ -33,7 +33,7 @@ export default function HomeScreen({ session }) {
   const [openDays, setOpenDays] = useState({})
   const [collapsedMonths, setCollapsedMonths] = useState({})
   const [editingDay, setEditingDay] = useState(null)
-  const targetDays = Math.max(1, Math.min(7, Number(profile?.training_days) || readTargetDays()))
+  const targetDays = Math.max(1, Math.min(7, Number(profile?.training_days) || readTargetDays(session.user.id)))
 
   const reload = async () => {
     if (prototypeOnly) return
@@ -52,6 +52,17 @@ export default function HomeScreen({ session }) {
       setProfile(profileResult.data || null)
     })
   }, [prototypeOnly, session.user.id, todayString])
+
+  useEffect(() => {
+    const syncGoals = event => setProfile(previous => ({
+      ...previous,
+      training_days: event.detail.trainingDays,
+      calories_target: event.detail.calories,
+      protein_target: event.detail.protein,
+    }))
+    window.addEventListener('fitness-goals-updated', syncGoals)
+    return () => window.removeEventListener('fitness-goals-updated', syncGoals)
+  }, [])
 
   const days = useMemo(() => groupByDay(sessions), [sessions])
   const months = useMemo(() => groupByMonth(days), [days])
@@ -405,8 +416,8 @@ function getCurrentWeek(today) {
   })
 }
 
-function readTargetDays() {
-  try { return Number(JSON.parse(localStorage.getItem('fitness-goals'))?.trainingDays) || 3 } catch { return 3 }
+function readTargetDays(userId) {
+  try { return Number(JSON.parse(localStorage.getItem(`fitness-goals:${userId}`))?.trainingDays) || 3 } catch { return 3 }
 }
 
 function formatDate(value) { return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' }) }
