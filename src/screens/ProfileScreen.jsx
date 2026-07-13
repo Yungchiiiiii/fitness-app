@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getProfile, getRecoveryLogs, getWeightLogs, updateProfile, upsertWeightLog } from '../lib/db'
-import { painLogs, weightLogs as seedWeightLogs } from '../lib/prototypeData'
+import { getProfile, getWeightLogs, updateProfile, upsertWeightLog } from '../lib/db'
+import { weightLogs as seedWeightLogs } from '../lib/prototypeData'
 import { supabase } from '../lib/supabase'
 
 const initialGoals = {
@@ -36,7 +36,6 @@ export default function ProfileScreen({ session }) {
   const name = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || '使用者'
   const [weeklyWeight, setWeeklyWeight] = useState('60.0')
   const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
-  const [recovery, setRecovery] = useState(painLogs)
   const [goals, setGoals] = useState(() => loadGoals(session.user.id))
   const [showGoals, setShowGoals] = useState(false)
   const [error, setError] = useState('')
@@ -48,8 +47,7 @@ export default function ProfileScreen({ session }) {
     Promise.all([
       getProfile(session.user.id),
       getWeightLogs(session.user.id),
-      getRecoveryLogs(session.user.id),
-    ]).then(([profileResult, weightResult, recoveryResult]) => {
+    ]).then(([profileResult, weightResult]) => {
       if (cancelled) return
       if (profileResult.data) {
         const profile = profileResult.data
@@ -72,7 +70,6 @@ export default function ProfileScreen({ session }) {
         })))
         setWeeklyWeight(String(weightResult.data.at(-1).weight))
       }
-      if (!recoveryResult.error && recoveryResult.data?.length) setRecovery(recoveryResult.data)
       if (profileResult.error && profileResult.error.code !== 'PGRST116') setError(`讀取個人資料失敗：${profileResult.error.message}`)
     })
     return () => { cancelled = true }
@@ -128,7 +125,7 @@ export default function ProfileScreen({ session }) {
     <div className="screen-fade">
       <div style={{ padding: '8px 4px 4px' }}>
         <div className="display" style={{ fontSize: 30, fontWeight: 900, color: 'var(--ink-1)' }}>我</div>
-      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>目標、恢復與個人資料</div>
+      <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>目標與個人資料</div>
       </div>
       {error && <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{error}</div>}
 
@@ -170,20 +167,6 @@ export default function ProfileScreen({ session }) {
           <span className="pill" style={{ color: '#B45309', background: '#FEF3C7' }}>維持區間</span>
         </div>
         <WeightChart logs={logs} />
-      </div>
-
-      <div className="section-title">恢復狀態</div>
-      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {recovery.map(log => (
-          <div key={log.id || log.key} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{ width: 42, height: 42, borderRadius: 14, background: '#FEE2E2', color: '#DC2626', display: 'grid', placeItems: 'center', fontWeight: 900 }}>!</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{log.bodyPart || log.body_part} 不適</div>
-              <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 2 }}>{log.note}</div>
-            </div>
-            <span className="pill" style={{ color: '#DC2626', background: '#FEE2E2' }}>{log.intensity}/10</span>
-          </div>
-        ))}
       </div>
 
       <div className="section-title">目標設定</div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getCustomExercises, getExerciseProgress, getSessions } from '../lib/db'
+import { getCustomExercises, getExerciseProgress, getHiddenExercises, getSessions } from '../lib/db'
 import { CATEGORY_META, WORLD_GYM_LIBRARY, getExerciseByName } from '../lib/exerciseLibrary'
 
 const categoryKeys = Object.keys(CATEGORY_META)
@@ -12,6 +12,7 @@ export default function TrainingScreen({ session }) {
   const [progress, setProgress] = useState([])
   const [sessions, setSessions] = useState([])
   const [customExercises, setCustomExercises] = useState([])
+  const [hiddenExerciseNames, setHiddenExerciseNames] = useState([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -22,11 +23,19 @@ export default function TrainingScreen({ session }) {
       getExerciseProgress(session.user.id, selected),
       getSessions(session.user.id),
       getCustomExercises(session.user.id),
-    ]).then(([progressResult, sessionResult, customResult]) => {
+      getHiddenExercises(session.user.id),
+    ]).then(([progressResult, sessionResult, customResult, hiddenResult]) => {
       if (cancelled) return
+      const hiddenNames = (hiddenResult.data || []).map(row => row.exercise_name)
+      const visibleNames = [
+        ...(customResult.data || []).map(item => item.name),
+        ...Object.values(WORLD_GYM_LIBRARY).flatMap(items => items.map(item => item.name)),
+      ].filter(name => !hiddenNames.includes(name))
       setProgress(progressResult.data || [])
       setSessions(sessionResult.data || [])
       setCustomExercises(customResult.data || [])
+      setHiddenExerciseNames(hiddenNames)
+      if (!visibleNames.includes(selected) && visibleNames.length) setSelected(visibleNames[0])
       setLoading(false)
     })
     return () => { cancelled = true }
@@ -83,7 +92,7 @@ export default function TrainingScreen({ session }) {
       {history.slice().reverse().map(entry => <RecordCard key={entry.key} entry={entry} unit={unit} inputType={inputType} />)}
     </div>
 
-    {showPicker && <ExercisePicker category={category} selected={selected} customExercises={customExercises} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
+    {showPicker && <ExercisePicker category={category} selected={selected} customExercises={customExercises} hiddenExerciseNames={hiddenExerciseNames} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
   </div>
 }
 
@@ -108,10 +117,10 @@ function ProgressLine({ data, unit }) {
   </svg>
 }
 
-function ExercisePicker({ category, selected, customExercises, onCategory, onClose, onSelect }) {
+function ExercisePicker({ category, selected, customExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
   const builtIn = (WORLD_GYM_LIBRARY[category] || []).map(item => item.name)
   const custom = customExercises.filter(item => item.category === category).map(item => item.name)
-  const names = [...new Set([...custom, ...builtIn])]
+  const names = [...new Set([...custom, ...builtIn])].filter(name => !hiddenExerciseNames.includes(name))
   return <div className="sheet-backdrop training-picker-backdrop" onClick={event => event.target === event.currentTarget && onClose()}>
     <section className="sheet-panel training-picker">
       <div className="sheet-handle" />

@@ -6,6 +6,7 @@ import {
   createSession,
   createSet,
   deleteCustomExercise,
+  deleteExerciseHistory,
   getCustomExercises,
   getHiddenExercises,
   hideExercise,
@@ -32,7 +33,7 @@ const customToLibraryItem = row => ({
   custom: true,
 })
 
-export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
+export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChanged }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [filter, setFilter] = useState('lower')
   const [query, setQuery] = useState('')
@@ -180,7 +181,16 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
   }
 
   const removeCustom = async (item, askForConfirmation = true) => {
-    if (askForConfirmation && !window.confirm(`確定刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
+    if (askForConfirmation && !window.confirm(`確定刪除「${item.name}」？\n\n所有過去訓練紀錄也會一起刪除，且無法復原。`)) return
+    if (!userId) {
+      setCustomError('尚未取得帳號資料，請重新整理後再試。')
+      return
+    }
+    const historyResult = await deleteExerciseHistory(userId, item.name)
+    if (historyResult.error) {
+      setCustomError(`刪除歷史紀錄失敗：${historyResult.error.message}`)
+      return
+    }
     const { error } = await deleteCustomExercise(item.id)
     if (error) {
       setCustomError(`刪除失敗：${error.message}`)
@@ -188,16 +198,22 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
     }
     setCustomExercises(previous => previous.filter(row => row.id !== item.id))
     setSelected(previous => previous.filter(row => row.id !== item.id))
+    onLibraryChanged?.()
   }
 
   const removeLibraryItem = async item => {
-    if (!window.confirm(`確定從你的運動清單刪除「${item.name}」？過去已完成的訓練紀錄不會被刪除。`)) return
+    if (!window.confirm(`確定刪除「${item.name}」？\n\n所有過去訓練紀錄也會一起刪除，且無法復原。`)) return
     if (item.custom) {
       await removeCustom(item, false)
       return
     }
     if (!userId) {
       setCustomError('尚未取得帳號資料，請重新整理後再試。')
+      return
+    }
+    const historyResult = await deleteExerciseHistory(userId, item.name)
+    if (historyResult.error) {
+      setCustomError(`刪除歷史紀錄失敗：${historyResult.error.message}`)
       return
     }
     const { error } = await hideExercise(userId, item.name)
@@ -207,6 +223,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
     }
     setHiddenExerciseNames(previous => [...new Set([...previous, item.name])])
     setSelected(previous => previous.filter(row => row.name !== item.name))
+    onLibraryChanged?.()
   }
 
   const buildName = () => [...new Set(selected.map(item => CATEGORY_META[item.category].label))].join(' + ') || '今日訓練'

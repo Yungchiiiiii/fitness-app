@@ -180,7 +180,7 @@ export default function HomeScreen({ session }) {
         })}
       </section>
 
-      {showBuilder && <ExercisePickerSheet sessions={sessions} prototypeOnly={prototypeOnly} onClose={() => setShowBuilder(false)} onSaved={handleCreated} />}
+      {showBuilder && <ExercisePickerSheet sessions={sessions} prototypeOnly={prototypeOnly} onClose={() => setShowBuilder(false)} onSaved={handleCreated} onLibraryChanged={reload} />}
       {editingDay && (
         <EditDaySheet
           day={editingDay}

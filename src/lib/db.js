@@ -38,6 +38,45 @@ export const updateExercise = (id, updates) =>
 export const deleteExercise = (id) =>
   supabase.from('session_exercises').delete().eq('id', id)
 
+export const deleteExerciseHistory = async (userId, exerciseName) => {
+  const { data: sessions, error: sessionsError } = await supabase
+    .from('workout_sessions')
+    .select('id')
+    .eq('user_id', userId)
+  if (sessionsError) return { error: sessionsError }
+
+  const sessionIds = (sessions || []).map(session => session.id)
+  if (!sessionIds.length) return { error: null }
+
+  const { data: deleted, error: deleteError } = await supabase
+    .from('session_exercises')
+    .delete()
+    .eq('name', exerciseName)
+    .in('session_id', sessionIds)
+    .select('session_id')
+  if (deleteError) return { error: deleteError }
+
+  const affectedSessionIds = [...new Set((deleted || []).map(exercise => exercise.session_id))]
+  if (!affectedSessionIds.length) return { error: null }
+
+  const { data: remaining, error: remainingError } = await supabase
+    .from('session_exercises')
+    .select('session_id')
+    .in('session_id', affectedSessionIds)
+  if (remainingError) return { error: remainingError }
+
+  const sessionsWithExercises = new Set((remaining || []).map(exercise => exercise.session_id))
+  const emptySessionIds = affectedSessionIds.filter(id => !sessionsWithExercises.has(id))
+  if (!emptySessionIds.length) return { error: null }
+
+  const { error: emptySessionError } = await supabase
+    .from('workout_sessions')
+    .delete()
+    .eq('user_id', userId)
+    .in('id', emptySessionIds)
+  return { error: emptySessionError }
+}
+
 // ── Sets ──────────────────────────────────────────────
 export const createSet = (set) =>
   supabase.from('exercise_sets').insert(set).select().single()
