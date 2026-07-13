@@ -13,7 +13,7 @@ import {
 } from '../lib/db'
 import { ExercisePickerSheet, CAT_META } from '../components/NewSessionModal'
 import ProfileScreen from './ProfileScreen'
-import { demoSessions, macroSnapshot } from '../lib/prototypeData'
+import { macroSnapshot } from '../lib/prototypeData'
 
 const isoDate = date => {
   const offset = date.getTimezoneOffset()
@@ -25,7 +25,7 @@ export default function HomeScreen({ session }) {
   const today = useMemo(() => new Date(), [])
   const todayString = isoDate(today)
   const name = session?.user?.user_metadata?.name || '你'
-  const [sessions, setSessions] = useState(() => prototypeOnly ? loadLocalSessions() : [])
+  const [sessions, setSessions] = useState([])
   const [nutrition, setNutrition] = useState(null)
   const [profile, setProfile] = useState(null)
   const [showBuilder, setShowBuilder] = useState(false)
@@ -52,11 +52,6 @@ export default function HomeScreen({ session }) {
       setProfile(profileResult.data || null)
     })
   }, [prototypeOnly, session.user.id, todayString])
-
-  useEffect(() => {
-    if (!prototypeOnly) return
-    window.localStorage.setItem('fitness-diary-sessions', JSON.stringify(sessions))
-  }, [prototypeOnly, sessions])
 
   const days = useMemo(() => groupByDay(sessions), [sessions])
   const months = useMemo(() => groupByMonth(days), [days])
@@ -221,6 +216,7 @@ function RingLegend({ color, label, value, target, unit }) {
 function DayCard({ day, open, onToggle, onEdit, onDelete }) {
   const [translate, setTranslate] = useState(0)
   const [start, setStart] = useState(null)
+  const [openExercises, setOpenExercises] = useState({})
   const date = new Date(`${day.date}T00:00:00`)
   const categories = [...new Set(day.exercises.map(exercise => CAT_META[exercise.category]?.label).filter(Boolean))]
   const title = day.name || categories.join(' + ') || '訓練'
@@ -228,7 +224,10 @@ function DayCard({ day, open, onToggle, onEdit, onDelete }) {
   const finish = () => { setTranslate(translate < -45 ? -168 : 0); setStart(null) }
   return (
     <div className="diary-swipe-row">
-      <div className="diary-swipe-actions"><button onClick={onEdit}>✎<span>編輯</span></button><button onClick={onDelete}>♲<span>刪除</span></button></div>
+      <div className="diary-swipe-actions">
+        <button onClick={onEdit}><EditIcon /><span>編輯</span></button>
+        <button onClick={onDelete}><TrashIcon /><span>刪除</span></button>
+      </div>
       <article className="day-card" style={{ transform: `translateX(${translate}px)` }}
         onTouchStart={event => setStart(event.touches[0].clientX)} onTouchMove={event => move(event.touches[0].clientX)} onTouchEnd={finish}
         onMouseDown={event => setStart(event.clientX)} onMouseMove={event => event.buttons === 1 && move(event.clientX)} onMouseUp={finish} onMouseLeave={() => start !== null && finish()}>
@@ -238,8 +237,20 @@ function DayCard({ day, open, onToggle, onEdit, onDelete }) {
           <i>{open ? '⌃' : '⌄'}</i>
         </button>
         {open && <div className="day-details">
-          {day.exercises.map(exercise => <div key={exercise.id}><span><strong>{exercise.name}</strong>{exercise.note && <small>{exercise.note}</small>}</span><em>{exercise.exercise_sets?.length || 0} 組</em></div>)}
-          <div className="day-detail-actions"><button onClick={onEdit}>編輯紀錄</button><button onClick={onDelete}>刪除</button></div>
+          {day.exercises.map(exercise => {
+            const exerciseOpen = Boolean(openExercises[exercise.id])
+            return <div className="day-exercise" key={exercise.id}>
+              <button className="day-exercise-summary" onClick={() => setOpenExercises(previous => ({ ...previous, [exercise.id]: !exerciseOpen }))}>
+                <span><strong>{exercise.name}</strong>{exercise.note && <small>{exercise.note}</small>}</span>
+                <em>{exercise.exercise_sets?.length || 0} 組 <i>{exerciseOpen ? '⌃' : '⌄'}</i></em>
+              </button>
+              {exerciseOpen && <div className="day-exercise-sets">
+                {(exercise.exercise_sets || []).slice().sort((a, b) => a.order_index - b.order_index).map((set, index) => (
+                  <div key={set.id || index}><strong>第 {index + 1} 組</strong><span>{formatExerciseSet(set)}</span></div>
+                ))}
+              </div>}
+            </div>
+          })}
         </div>}
       </article>
     </div>
@@ -335,6 +346,14 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
 
 function UserIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="3.5" /><path d="M5.5 20c.6-4 2.7-6 6.5-6s5.9 2 6.5 6" /></svg> }
 
+function EditIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/></svg> }
+function TrashIcon() { return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/><path d="M10 11v5M14 11v5"/></svg> }
+
+function formatExerciseSet(set) {
+  if (set.duration_seconds) return `${Math.round(set.duration_seconds / 60)} 分鐘${set.weight ? ` · ${set.weight}kg` : ''}`
+  return `${set.weight || 0}kg × ${set.reps || 0} 次`
+}
+
 function groupByDay(sessions) {
   const grouped = {}
   sessions.forEach(workout => {
@@ -377,15 +396,6 @@ function getCurrentWeek(today) {
 
 function readTargetDays() {
   try { return Number(JSON.parse(localStorage.getItem('fitness-goals'))?.trainingDays) || 3 } catch { return 3 }
-}
-
-function loadLocalSessions() {
-  try {
-    const saved = window.localStorage.getItem('fitness-diary-sessions')
-    return saved ? JSON.parse(saved) : demoSessions
-  } catch {
-    return demoSessions
-  }
 }
 
 function formatDate(value) { return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' }) }

@@ -1,111 +1,141 @@
-import { useMemo, useState } from 'react'
-import { createExercise, createSession, createSet, updateSession } from '../lib/db'
+import { useEffect, useMemo, useState } from 'react'
+import { classifyExerciseWithAI } from '../lib/ai'
+import {
+  createCustomExercise,
+  createExercise,
+  createSession,
+  createSet,
+  getCustomExercises,
+  updateSession,
+} from '../lib/db'
+import { CATEGORY_META, WORLD_GYM_LIBRARY } from '../lib/exerciseLibrary'
 import { supabase } from '../lib/supabase'
 
-export const EXERCISE_LIBRARY = {
-  lower: ['單側負重火箭蹲', '單側負重側向蹲', '單側臀橋', '深蹲', '史密斯深蹲', '羅馬尼亞硬拉', '保加利亞弓箭步', '硬舉', '腿推', '腿彎舉', '腿伸展', '臀推'],
-  upper: ['臥推', '上斜臥推', '肩推', '引體向上', '滑輪下拉', '坐姿划船', '啞鈴划船', '二頭彎舉', '三頭下壓', '側平舉', '臉拉', '飛鳥'],
-  cardio: ['跑步機', '爬樓機', '飛輪', '划船機', '橢圓機', '戶外跑步'],
-  core: ['棒式', '捲腹', '懸掛抬腿', '俄羅斯轉體', '死蟲式', '側棒式', '滾輪'],
-}
-
-export const CAT_META = {
-  lower: { label: '下肢', inputType: 'strength', description: '股四頭與臀大肌 / 下肢穩定' },
-  upper: { label: '上肢', inputType: 'strength', description: '胸背肩與手臂 / 上肢力量' },
-  cardio: { label: '有氧', inputType: 'cardio', description: '心肺耐力 / 節奏與時間' },
-  core: { label: '核心', inputType: 'core', description: '核心控制 / 軀幹穩定' },
-}
-
-export const getCategory = (name) => Object.keys(EXERCISE_LIBRARY).find(key => EXERCISE_LIBRARY[key].includes(name)) || 'upper'
-export const getInputType = name => CAT_META[getCategory(name)].inputType
+export const CAT_META = CATEGORY_META
+export const EXERCISE_LIBRARY = Object.fromEntries(Object.entries(WORLD_GYM_LIBRARY).map(([category, rows]) => [category, rows.map(row => row.name)]))
 
 const emptySet = inputType => inputType === 'strength'
   ? { weight: '', reps: '' }
   : { duration_min: '', weight: '' }
 
-const newSets = inputType => inputType === 'strength'
-  ? Array.from({ length: 3 }, () => emptySet(inputType))
-  : [emptySet(inputType)]
+const customToLibraryItem = row => ({
+  id: row.id,
+  name: row.name,
+  category: row.category || 'upper',
+  inputType: row.input_type || CATEGORY_META[row.category]?.inputType || 'strength',
+  target: row.target || CATEGORY_META[row.category]?.fallbackTarget || '全身肌群',
+  equipment: '自訂動作',
+  custom: true,
+})
 
-export function ExercisePickerSheet({ sessions, prototypeOnly = false, onClose, onSaved }) {
+export function ExercisePickerSheet({ sessions, onClose, onSaved }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState('lower')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState([])
+  const [customExercises, setCustomExercises] = useState([])
   const [saving, setSaving] = useState(false)
+  const [customName, setCustomName] = useState('')
+  const [customCategory, setCustomCategory] = useState('auto')
+  const [customTarget, setCustomTarget] = useState('')
+  const [classifying, setClassifying] = useState(false)
+  const [customError, setCustomError] = useState('')
 
-  const library = useMemo(() => Object.entries(EXERCISE_LIBRARY)
-    .flatMap(([category, names]) => names.map(name => ({ name, category, ...CAT_META[category] })))
-    .filter(item => filter === 'all' || item.category === filter)
-    .filter(item => item.name.toLowerCase().includes(query.trim().toLowerCase())), [filter, query])
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (!data.user) return
+      getCustomExercises(data.user.id).then(({ data: rows }) => setCustomExercises((rows || []).map(customToLibraryItem)))
+    })
+  }, [])
+
+  const library = useMemo(() => {
+    const rows = filter === 'custom'
+      ? customExercises
+      : [
+          ...customExercises.filter(item => item.category === filter),
+          ...(WORLD_GYM_LIBRARY[filter] || []).map(item => ({ ...item, category: filter })),
+        ]
+    const normalizedQuery = query.trim().toLowerCase()
+    return rows.filter(item => !normalizedQuery || `${item.name} ${item.target} ${item.equipment}`.toLowerCase().includes(normalizedQuery))
+  }, [customExercises, filter, query])
 
   const addMovement = item => {
     if (selected.some(movement => movement.name === item.name)) return
-    setSelected(previous => [...previous, {
-      name: item.name,
-      category: item.category,
-      inputType: item.inputType,
-      sets: newSets(item.inputType),
-      note: '',
-    }])
+    setSelected(previous => [...previous, { ...item, sets: [emptySet(item.inputType)], note: '' }])
   }
 
   const removeMovement = name => setSelected(previous => previous.filter(item => item.name !== name))
-
   const updateSetValue = (name, index, field, value) => setSelected(previous => previous.map(item => item.name !== name ? item : {
     ...item,
     sets: item.sets.map((set, setIndex) => setIndex === index ? { ...set, [field]: value } : set),
   }))
-
-  const addSet = name => setSelected(previous => previous.map(item => item.name !== name ? item : {
-    ...item,
-    sets: [...item.sets, emptySet(item.inputType)],
-  }))
-
+  const addSet = name => setSelected(previous => previous.map(item => item.name !== name ? item : { ...item, sets: [...item.sets, emptySet(item.inputType)] }))
   const removeSet = (name, index) => setSelected(previous => previous.map(item => item.name !== name ? item : {
     ...item,
     sets: item.sets.length === 1 ? item.sets : item.sets.filter((_, setIndex) => setIndex !== index),
   }))
-
   const updateNote = (name, note) => setSelected(previous => previous.map(item => item.name === name ? { ...item, note } : item))
 
-  const buildName = () => {
-    const categories = [...new Set(selected.map(item => CAT_META[item.category].label))]
-    return categories.join(' + ') || '今日訓練'
+  const analyzeCustom = async () => {
+    if (!customName.trim()) {
+      setCustomError('先輸入動作或器械名稱。')
+      return null
+    }
+    setClassifying(true)
+    setCustomError('')
+    try {
+      const result = await classifyExerciseWithAI(customName.trim())
+      setCustomCategory(result.category)
+      setCustomTarget(result.target)
+      return result
+    } catch (error) {
+      setCustomError(`AI 判斷失敗：${error.message}`)
+      return null
+    } finally {
+      setClassifying(false)
+    }
   }
+
+  const saveCustom = async () => {
+    const suggestion = customCategory === 'auto' || !customTarget ? await analyzeCustom() : null
+    const category = suggestion?.category || customCategory
+    const target = suggestion?.target || customTarget
+    if (!customName.trim() || !CATEGORY_META[category]) return
+    setClassifying(true)
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) throw new Error('雲端身分尚未建立')
+      const inputType = CATEGORY_META[category].inputType
+      const { data, error } = await createCustomExercise({
+        user_id: user.id,
+        name: customName.trim(),
+        category,
+        input_type: inputType,
+        target: target || CATEGORY_META[category].fallbackTarget,
+      })
+      if (error) throw error
+      const item = customToLibraryItem(data)
+      setCustomExercises(previous => [...previous.filter(row => row.name !== item.name), item])
+      addMovement(item)
+      setCustomName('')
+      setCustomCategory('auto')
+      setCustomTarget('')
+      setCustomError('')
+    } catch (error) {
+      setCustomError(`新增失敗：${error.message}`)
+    } finally {
+      setClassifying(false)
+    }
+  }
+
+  const buildName = () => [...new Set(selected.map(item => CATEGORY_META[item.category].label))].join(' + ') || '今日訓練'
 
   const save = async () => {
     if (!selected.length || saving) return
     setSaving(true)
     try {
-      if (prototypeOnly) {
-        const stamp = Date.now()
-        const created = {
-          id: `proto-${stamp}`,
-          date,
-          name: buildName(),
-          session_exercises: selected.map((item, index) => ({
-            id: `proto-ex-${stamp}-${index}`,
-            name: item.name,
-            category: item.category,
-            note: item.note,
-            order_index: index,
-            exercise_sets: item.sets.map((set, setIndex) => ({
-              id: `proto-set-${stamp}-${index}-${setIndex}`,
-              order_index: setIndex,
-              weight: Number(set.weight) || null,
-              reps: item.inputType === 'strength' ? Number(set.reps) || null : null,
-              duration_seconds: item.inputType === 'strength' ? null : Math.round((Number(set.duration_min) || 0) * 60),
-              unit: 'kg',
-            })),
-          })),
-        }
-        onSaved(created)
-        return
-      }
-
       const { data: { user }, error: authError } = await supabase.auth.getUser()
-      if (authError || !user) throw new Error('請重新登入後再試')
+      if (authError || !user) throw new Error('雲端身分尚未建立，請重新整理後再試')
       const sameDay = sessions.find(item => item.date === date)
       let workout = sameDay
       if (!workout) {
@@ -113,8 +143,7 @@ export function ExercisePickerSheet({ sessions, prototypeOnly = false, onClose, 
         if (result.error) throw result.error
         workout = result.data
       } else {
-        const existingLabels = String(workout.name || '').split(' + ')
-        const mergedName = [...new Set([...existingLabels, ...buildName().split(' + ')])].filter(Boolean).join(' + ')
+        const mergedName = [...new Set([...String(workout.name || '').split(' + '), ...buildName().split(' + ')])].filter(Boolean).join(' + ')
         const result = await updateSession(workout.id, { name: mergedName })
         if (result.error) throw result.error
       }
@@ -132,15 +161,14 @@ export function ExercisePickerSheet({ sessions, prototypeOnly = false, onClose, 
         if (exerciseResult.error) throw exerciseResult.error
         for (let setIndex = 0; setIndex < item.sets.length; setIndex += 1) {
           const set = item.sets[setIndex]
-          const payload = {
+          const setResult = await createSet({
             exercise_id: exerciseResult.data.id,
             order_index: setIndex,
             weight: Number(set.weight) || null,
             reps: item.inputType === 'strength' ? Number(set.reps) || null : null,
             duration_seconds: item.inputType === 'strength' ? null : Math.round((Number(set.duration_min) || 0) * 60),
             unit: 'kg',
-          }
-          const setResult = await createSet(payload)
+          })
           if (setResult.error) throw setResult.error
         }
       }
@@ -151,77 +179,66 @@ export function ExercisePickerSheet({ sessions, prototypeOnly = false, onClose, 
     }
   }
 
-  return (
-    <div className="session-builder" role="dialog" aria-modal="true">
-      <header className="session-builder-header">
-        <button className="round-close" onClick={onClose} aria-label="關閉">×</button>
-        <span className="eyebrow">NEW SESSION</span>
-        <button className="neon-button compact" onClick={save} disabled={!selected.length || saving}>
-          {saving ? '儲存中' : 'SAVE'}
-        </button>
-      </header>
+  return <div className="session-builder" role="dialog" aria-modal="true">
+    <header className="session-builder-header">
+      <button className="round-close" onClick={onClose} aria-label="關閉">×</button>
+      <span className="eyebrow">NEW SESSION</span>
+      <button className="neon-button compact" onClick={save} disabled={!selected.length || saving}>{saving ? '儲存中' : 'SAVE'}</button>
+    </header>
 
-      <main className="session-builder-content">
-        <h1>BUILD<br />SESSION</h1>
-        <div className="builder-meta">
-          <input type="date" value={date} onChange={event => setDate(event.target.value)} aria-label="訓練日期" />
-          <span>· 點擊動作 [+] 加入 · [−] 移除</span>
+    <main className="session-builder-content">
+      <h1>BUILD<br />SESSION</h1>
+      <div className="builder-meta"><input type="date" value={date} onChange={event => setDate(event.target.value)} aria-label="訓練日期" /><span>· 加入動作後即可直接記錄</span></div>
+      <div className="picked-count"><i /> {selected.length} MOVEMENTS PICKED</div>
+
+      {selected.map((item, movementIndex) => <section className="movement-editor" key={item.name}>
+        <div className="movement-editor-title"><span>{String(movementIndex + 1).padStart(2, '0')}</span><strong>{item.name}</strong><button onClick={() => removeMovement(item.name)} aria-label={`移除 ${item.name}`}>−</button></div>
+        <div className="set-grid set-grid-header"><span /><span>{item.inputType === 'strength' ? 'KG' : '分鐘'}</span><span>{item.inputType === 'strength' ? '次' : '負重'}</span><span /></div>
+        {item.sets.map((set, setIndex) => <div className="set-grid" key={`${item.name}-${setIndex}`}>
+          <span className="set-number">{setIndex + 1}</span>
+          <input type="number" inputMode="decimal" placeholder={item.inputType === 'strength' ? 'kg' : '分鐘'} value={item.inputType === 'strength' ? set.weight : set.duration_min} onChange={event => updateSetValue(item.name, setIndex, item.inputType === 'strength' ? 'weight' : 'duration_min', event.target.value)} />
+          <input type="number" inputMode="decimal" placeholder={item.inputType === 'strength' ? '次' : 'kg'} value={item.inputType === 'strength' ? set.reps : set.weight} onChange={event => updateSetValue(item.name, setIndex, item.inputType === 'strength' ? 'reps' : 'weight', event.target.value)} />
+          <button className="remove-set" onClick={() => removeSet(item.name, setIndex)} aria-label="移除組數">×</button>
+        </div>)}
+        <button className="add-set" onClick={() => addSet(item.name)}>+ 加一組</button>
+        <textarea value={item.note} onChange={event => updateNote(item.name, event.target.value)} placeholder="備註（選填）" />
+      </section>)}
+
+      <section className="movement-library">
+        <div className="eyebrow muted">WORLD GYM 三峽動作庫</div>
+        <label className="movement-search"><span>⌕</span><input placeholder="搜尋器械或動作" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        <div className="library-filters">
+          {Object.entries(CATEGORY_META).map(([key, value]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{value.label}</button>)}
+          <button className={filter === 'custom' ? 'active custom-filter' : 'custom-filter'} onClick={() => setFilter('custom')}>＋ 新增運動</button>
         </div>
-        <div className="picked-count"><i /> {selected.length} MOVEMENTS PICKED</div>
 
-        {selected.map((item, movementIndex) => (
-          <section className="movement-editor" key={item.name}>
-            <div className="movement-editor-title">
-              <span>{String(movementIndex + 1).padStart(2, '0')}</span>
-              <strong>{item.name}</strong>
-              <button onClick={() => removeMovement(item.name)} aria-label={`移除 ${item.name}`}>−</button>
-            </div>
-            <div className="set-grid set-grid-header">
-              <span />
-              <span>{item.inputType === 'strength' ? 'KG' : '分鐘'}</span>
-              <span>{item.inputType === 'strength' ? '次' : '負重'}</span>
-              <span />
-            </div>
-            {item.sets.map((set, setIndex) => (
-              <div className="set-grid" key={`${item.name}-${setIndex}`}>
-                <span className="set-number">{setIndex + 1}</span>
-                <input type="number" inputMode="decimal" placeholder={item.inputType === 'strength' ? 'kg' : '分鐘'} value={item.inputType === 'strength' ? set.weight : set.duration_min} onChange={event => updateSetValue(item.name, setIndex, item.inputType === 'strength' ? 'weight' : 'duration_min', event.target.value)} />
-                <input type="number" inputMode="decimal" placeholder={item.inputType === 'strength' ? '次' : 'kg'} value={item.inputType === 'strength' ? set.reps : set.weight} onChange={event => updateSetValue(item.name, setIndex, item.inputType === 'strength' ? 'reps' : 'weight', event.target.value)} />
-                <button className="remove-set" onClick={() => removeSet(item.name, setIndex)} aria-label="移除組數">×</button>
-              </div>
-            ))}
-            <button className="add-set" onClick={() => addSet(item.name)}>+ 加一組</button>
-            <textarea value={item.note} onChange={event => updateNote(item.name, event.target.value)} placeholder="備註（選填）" />
-          </section>
-        ))}
+        {filter === 'custom' && <div className="custom-exercise-form">
+          <strong>新增自己的器械或動作</strong>
+          <input value={customName} onChange={event => setCustomName(event.target.value)} placeholder="名稱，例如：臀部那台往外推" />
+          <div className="custom-classify-row">
+            <select value={customCategory} onChange={event => setCustomCategory(event.target.value)}>
+              <option value="auto">讓 AI 自動分類</option>
+              {Object.entries(CATEGORY_META).map(([key, value]) => <option key={key} value={key}>{value.label}</option>)}
+            </select>
+            <button onClick={analyzeCustom} disabled={classifying}>{classifying ? '判斷中…' : 'AI 判斷部位'}</button>
+          </div>
+          {customTarget && <div className="ai-target-result"><span>AI 建議</span><strong>{CATEGORY_META[customCategory]?.label} · {customTarget}</strong></div>}
+          {customError && <div className="custom-error">{customError}</div>}
+          <button className="save-custom-exercise" onClick={saveCustom} disabled={classifying || !customName.trim()}>儲存到雲端並加入</button>
+        </div>}
 
-        <section className="movement-library">
-          <div className="eyebrow muted">LIBRARY</div>
-          <label className="movement-search">
-            <span>⌕</span>
-            <input placeholder="SEARCH MOVEMENTS" value={query} onChange={event => setQuery(event.target.value)} />
-          </label>
-          <div className="library-filters">
-            {[['all', '全部'], ...Object.entries(CAT_META).map(([key, value]) => [key, value.label])].map(([key, label]) => (
-              <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}</button>
-            ))}
-          </div>
-          <div className="library-list">
-            {library.map(item => {
-              const picked = selected.some(movement => movement.name === item.name)
-              return (
-                <button key={item.name} className="library-row" onClick={() => picked ? removeMovement(item.name) : addMovement(item)}>
-                  <span><strong>{item.name}</strong><small>{item.description}</small></span>
-                  <i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      </main>
-    </div>
-  )
+        <div className="library-list">
+          {library.map(item => {
+            const picked = selected.some(movement => movement.name === item.name)
+            return <button key={item.id || item.name} className="library-row" onClick={() => picked ? removeMovement(item.name) : addMovement(item)}>
+              <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span><i className={picked ? 'picked' : ''}>{picked ? '✓' : '+'}</i>
+            </button>
+          })}
+          {!library.length && <div className="empty-custom-library">還沒有自訂動作，先在上方建立一個。</div>}
+        </div>
+      </section>
+    </main>
+  </div>
 }
 
-// Kept as a compatibility export for older callers.
 export function SetsFillerSheet() { return null }

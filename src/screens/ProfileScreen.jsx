@@ -130,7 +130,7 @@ export default function ProfileScreen({ session }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 900, fontSize: 17, color: 'var(--ink-1)' }}>{name}</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>本機使用模式 · 不需要登入</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>雲端匿名模式 · 不需要帳號密碼</div>
         </div>
         <span className="pill" style={{ color: 'var(--orange-d)', background: '#FFEDD5' }}>PWA</span>
       </div>

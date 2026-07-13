@@ -1,203 +1,143 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getExerciseProgress } from '../lib/db'
-import { exerciseCategories, exerciseProgress } from '../lib/prototypeData'
+import { getCustomExercises, getExerciseProgress, getSessions } from '../lib/db'
+import { CATEGORY_META, WORLD_GYM_LIBRARY, getExerciseByName } from '../lib/exerciseLibrary'
 
-const defaultCategory = exerciseCategories[1]
+const categoryKeys = Object.keys(CATEGORY_META)
+const formatDate = value => new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
 
 export default function TrainingScreen({ session }) {
-  const prototypeOnly = !!session?.prototype
-  const [selected, setSelected] = useState('深蹲')
+  const [selected, setSelected] = useState('槓鈴深蹲')
   const [showPicker, setShowPicker] = useState(false)
-  const [category, setCategory] = useState(defaultCategory.id)
-  const [backendHistory, setBackendHistory] = useState([])
-  const [loading, setLoading] = useState(!prototypeOnly)
-  const isCardioOrCore = selected === '跑步' || selected === '平板支撐'
-  const history = useMemo(() => {
-    if (prototypeOnly) return exerciseProgress[selected] || []
-    return backendHistory.map(row => ({
-      date: new Date(`${row.date}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }),
-      best: isCardioOrCore
-        ? Math.round((row.total_duration_seconds || 0) / (selected === '跑步' ? 60 : 1))
-        : Number(row.best_weight) || 0,
-      oneRm: Number(row.best_estimated_1rm) || null,
-      sets: `${row.total_sets || 0} 組 · ${row.total_reps || 0} 次`,
-      note: row.total_volume ? `總訓練量 ${row.total_volume}kg` : '已完成這次紀錄',
-    }))
-  }, [backendHistory, isCardioOrCore, prototypeOnly, selected])
+  const [category, setCategory] = useState('lower')
+  const [progress, setProgress] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [customExercises, setCustomExercises] = useState([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (prototypeOnly || !session?.user?.id) return undefined
+    if (!session?.user?.id) return undefined
     let cancelled = false
     setLoading(true)
-    getExerciseProgress(session.user.id, selected).then(({ data }) => {
-      if (!cancelled) {
-        setBackendHistory(data || [])
-        setLoading(false)
-      }
+    Promise.all([
+      getExerciseProgress(session.user.id, selected),
+      getSessions(session.user.id),
+      getCustomExercises(session.user.id),
+    ]).then(([progressResult, sessionResult, customResult]) => {
+      if (cancelled) return
+      setProgress(progressResult.data || [])
+      setSessions(sessionResult.data || [])
+      setCustomExercises(customResult.data || [])
+      setLoading(false)
     })
     return () => { cancelled = true }
-  }, [session?.user?.id, selected, prototypeOnly])
+  }, [selected, session?.user?.id])
 
-  return (
-    <div className="screen-fade">
-      <div style={{ padding: '8px 4px 4px' }}>
-        <div className="display" style={{ fontSize: 30, fontWeight: 900, color: 'var(--ink-1)' }}>訓練進步</div>
-        <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>選一個動作，看重量與備註的變化</div>
+  const selectedMeta = getExerciseByName(selected) || customExercises.find(item => item.name === selected)
+  const inputType = selectedMeta?.inputType || selectedMeta?.input_type || (selectedMeta?.category === 'cardio' ? 'cardio' : selectedMeta?.category === 'core' ? 'core' : 'strength')
+  const unit = inputType === 'strength' ? 'kg' : inputType === 'cardio' ? '分' : '秒'
+  const history = useMemo(() => progress.map(row => {
+    const matchingExercise = sessions
+      .find(workout => workout.date === row.date)
+      ?.session_exercises?.find(exercise => exercise.name === selected)
+    const exactSets = (matchingExercise?.exercise_sets || []).slice().sort((a, b) => a.order_index - b.order_index)
+    const best = inputType === 'strength'
+      ? Number(row.best_weight) || 0
+      : Math.round((Number(row.total_duration_seconds) || 0) / (inputType === 'cardio' ? 60 : 1))
+    return {
+      key: `${row.date}-${matchingExercise?.id || selected}`,
+      date: formatDate(row.date),
+      best,
+      oneRm: Number(row.best_estimated_1rm) || null,
+      sets: exactSets,
+      setCount: Number(row.total_sets) || exactSets.length,
+      reps: Number(row.total_reps) || 0,
+      note: matchingExercise?.note || '',
+      volume: Number(row.total_volume) || 0,
+    }
+  }), [inputType, progress, selected, sessions])
+  const latest = history.at(-1)
+
+  return <div className="screen-fade training-history">
+    <header className="training-heading">
+      <h1>歷史紀錄</h1>
+      <p>選一個動作，看重量、組數與備註的變化</p>
+    </header>
+
+    <button className="exercise-query-main" onClick={() => setShowPicker(true)}>
+      <span><small>查詢動作</small><strong>{selected}</strong></span>
+      <span className="query-arrow" aria-hidden="true">⌄</span>
+    </button>
+
+    <section className="card progress-card">
+      <div className="progress-card-head">
+        <div><span>{selected} {inputType === 'strength' ? '重量趨勢' : '表現趨勢'}</span><strong>{latest?.best || 0}{unit}</strong></div>
+        {inputType === 'strength' && <em>est. 1RM {latest?.oneRm || 0}kg</em>}
       </div>
+      {loading && <p className="training-empty">正在讀取雲端紀錄…</p>}
+      {!loading && !history.length && <p className="training-empty">還沒有這個動作的紀錄，完成一次訓練後就會出現在這裡。</p>}
+      {!!history.length && <ProgressLine data={history} unit={unit} />}
+    </section>
 
-      <div className="exercise-query">
-        <button className="exercise-query-main" onClick={() => setShowPicker(true)}>
-          <span>
-            <span className="exercise-query-label">查詢動作</span>
-            <strong>{selected}</strong>
-          </span>
-          <span className="exercise-query-icon">⌄</span>
-        </button>
-      </div>
-
-      <div className="card" style={{ marginTop: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div>
-            <div className="section-title" style={{ margin: 0 }}>{selected} {isCardioOrCore ? '表現趨勢' : '重量趨勢'}</div>
-            <div className="display" style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-1)', marginTop: 6 }}>
-              {history.at(-1)?.best || 0}{isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'}
-            </div>
-          </div>
-          {!isCardioOrCore && (
-            <span className="pill" style={{ color: 'var(--orange-d)', background: 'var(--blue-soft)' }}>
-              est. 1RM {history.at(-1)?.oneRm || 0}kg
-            </span>
-          )}
-        </div>
-        {loading && <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 10 }}>正在讀取雲端進步紀錄...</div>}
-        {!loading && !history.length && <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 10 }}>還沒有這個動作的紀錄，完成一次訓練後就會出現在這裡。</div>}
-        {history.length > 0 && <ProgressLine data={history} unit={isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'} />}
-      </div>
-
-      <div className="section-title">每次紀錄</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {history.slice().reverse().map(entry => (
-          <RecordCard key={entry.date} entry={entry} unit={isCardioOrCore ? (selected === '跑步' ? '分' : '秒') : 'kg'} />
-        ))}
-      </div>
-
-      {showPicker && (
-        <ExercisePicker
-          category={category}
-          selected={selected}
-          onCategory={setCategory}
-          onClose={() => setShowPicker(false)}
-          onSelect={(name) => {
-            setSelected(name)
-            setShowPicker(false)
-          }}
-        />
-      )}
+    <h2 className="history-record-title">每次紀錄</h2>
+    <div className="training-record-list">
+      {history.slice().reverse().map(entry => <RecordCard key={entry.key} entry={entry} unit={unit} inputType={inputType} />)}
     </div>
-  )
+
+    {showPicker && <ExercisePicker category={category} selected={selected} customExercises={customExercises} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
+  </div>
 }
 
 function ProgressLine({ data, unit }) {
-  const values = data.map(d => d.best)
-  const min = Math.min(...values) - 4
-  const max = Math.max(...values) + 4
-  const pointList = data.map((d, i) => {
-    const x = 14 + i * (172 / Math.max(1, data.length - 1))
-    const y = 92 - ((d.best - min) / (max - min)) * 60
-    return { x, y, value: d.best, date: d.date }
-  })
-  const points = pointList.map(p => `${p.x},${p.y}`).join(' ')
-
-  return (
-    <svg viewBox="0 0 200 132" style={{ width: '100%', marginTop: 12 }}>
-      <path d="M14 96H186" stroke="#FED7AA" />
-      <path d="M14 64H186" stroke="#FED7AA" />
-      <path d="M14 32H186" stroke="#FED7AA" />
-      <polyline points={points} fill="none" stroke="url(#orangeLine)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-      <defs>
-        <linearGradient id="orangeLine" x1="0" x2="1">
-          <stop offset="0%" stopColor="#FF7A1E" />
-          <stop offset="100%" stopColor="#F43F5E" />
-        </linearGradient>
-      </defs>
-      {pointList.map((point, i) => {
-        const labelY = Math.max(11, point.y - 12)
-        return (
-          <g key={`${point.date}-${i}`}>
-            <text x={point.x} y={labelY} textAnchor="middle" fontSize="8" fill="#4E3424" fontWeight="900">{point.value}{unit}</text>
-            <circle cx={point.x} cy={point.y} r="5" fill="#fff" stroke="#FF7A1E" strokeWidth="4" />
-            <text x={point.x} y="124" textAnchor="middle" fontSize="9" fill="#84634C" fontWeight="800">{point.date}</text>
-          </g>
-        )
-      })}
-    </svg>
-  )
+  const display = data.slice(-6)
+  const values = display.map(item => item.best)
+  const min = Math.min(...values) - Math.max(1, (Math.max(...values) - Math.min(...values)) * .2)
+  const max = Math.max(...values) + Math.max(1, (Math.max(...values) - Math.min(...values)) * .2)
+  const points = display.map((item, index) => ({
+    x: 14 + index * (172 / Math.max(1, display.length - 1)),
+    y: 92 - ((item.best - min) / Math.max(1, max - min)) * 58,
+    ...item,
+  }))
+  return <svg className="progress-chart" viewBox="0 0 200 132" aria-label={`${unit}變化圖`}>
+    {[32, 64, 96].map(y => <path key={y} d={`M14 ${y}H186`} stroke="rgba(255,255,255,.12)" />)}
+    <polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="var(--neon)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    {points.map((point, index) => <g key={`${point.date}-${index}`}>
+      <text x={point.x} y={Math.max(10, point.y - 10)} textAnchor="middle" fontSize="8" fill="#D8FFAB" fontWeight="900">{point.best}{unit}</text>
+      <circle cx={point.x} cy={point.y} r="5" fill="#0c0c0d" stroke="var(--neon)" strokeWidth="3" />
+      <text x={point.x} y="124" textAnchor="middle" fontSize="9" fill="#A1A1A6" fontWeight="800">{point.date}</text>
+    </g>)}
+  </svg>
 }
 
-function ExercisePicker({ category, selected, onCategory, onClose, onSelect }) {
-  const active = exerciseCategories.find(c => c.id === category) || defaultCategory
-
-  return (
-    <div className="sheet-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="sheet-panel">
-        <div style={{ width: 36, height: 4, borderRadius: 99, background: 'var(--line-strong)', margin: '0 auto 18px' }} />
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <div className="display" style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-1)' }}>選擇動作</div>
-            <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 3 }}>先選分類，再選要查看的動作</div>
-          </div>
-          <button onClick={onClose} style={{ color: 'var(--ink-3)', fontSize: 22 }}>×</button>
-        </div>
-
-        <div className="picker-category-grid">
-          {exerciseCategories.map(item => (
-            <button
-              key={item.id}
-              className={`picker-choice ${category === item.id ? 'active' : ''}`}
-              onClick={() => onCategory(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="picker-exercise-list">
-          {active.exercises.map(name => (
-            <button
-              key={name}
-              className={`picker-exercise ${selected === name ? 'active' : ''}`}
-              onClick={() => onSelect(name)}
-            >
-              <span>{name}</span>
-              <span>{selected === name ? '目前顯示' : '查看紀錄'}</span>
-            </button>
-          ))}
-        </div>
+function ExercisePicker({ category, selected, customExercises, onCategory, onClose, onSelect }) {
+  const builtIn = (WORLD_GYM_LIBRARY[category] || []).map(item => item.name)
+  const custom = customExercises.filter(item => item.category === category).map(item => item.name)
+  const names = [...new Set([...custom, ...builtIn])]
+  return <div className="sheet-backdrop training-picker-backdrop" onClick={event => event.target === event.currentTarget && onClose()}>
+    <section className="sheet-panel training-picker">
+      <div className="sheet-handle" />
+      <header><div><h2>選擇動作</h2><p>先選分類，再選要查看的動作</p></div><button onClick={onClose} aria-label="關閉">×</button></header>
+      <div className="picker-category-grid">
+        {categoryKeys.map(key => <button key={key} className={`picker-choice ${category === key ? 'active' : ''}`} onClick={() => onCategory(key)}>{CATEGORY_META[key].label}</button>)}
       </div>
-    </div>
-  )
+      <div className="picker-exercise-list">
+        {names.map(name => <button key={name} className={`picker-exercise ${selected === name ? 'active' : ''}`} onClick={() => onSelect(name)}><span>{name}</span><span>{selected === name ? '目前顯示' : '›'}</span></button>)}
+      </div>
+    </section>
+  </div>
 }
 
-function RecordCard({ entry, unit }) {
+function RecordCard({ entry, unit, inputType }) {
   const [open, setOpen] = useState(false)
-  return (
-    <div className="card" style={{ padding: 15 }}>
-      <button onClick={() => setOpen(!open)} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: 12, textAlign: 'left' }}>
-        <div>
-          <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{entry.date}</div>
-          <div style={{ color: 'var(--ink-1)', fontSize: 18, fontWeight: 900, marginTop: 5 }}>{entry.best}{unit}</div>
-          {entry.oneRm ? <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 3 }}>est. 1RM {entry.oneRm}kg</div> : null}
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <span className="pill" style={{ color: '#fff', background: 'var(--orange)' }}>{open ? '收合' : '展開'}</span>
-          <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 10 }}>{entry.sets}</div>
-        </div>
-      </button>
-      {open && (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 14, background: 'var(--bg-sunk)', color: 'var(--ink-2)', fontSize: 13, lineHeight: 1.5, fontWeight: 700 }}>
-          備註：{entry.note}
-        </div>
-      )}
-    </div>
-  )
+  return <article className={`training-record card ${open ? 'open' : ''}`}>
+    <button className="training-record-summary" onClick={() => setOpen(value => !value)}>
+      <span><small>{entry.date}</small><strong>{entry.best}{unit}</strong>{entry.oneRm ? <em>est. 1RM {entry.oneRm}kg</em> : null}</span>
+      <span><b>{entry.setCount} 組{entry.reps ? ` · ${entry.reps} 次` : ''}</b><i>{open ? '⌃' : '⌄'}</i></span>
+    </button>
+    {open && <div className="training-record-detail">
+      {!!entry.sets.length && entry.sets.map((set, index) => <div key={set.id || index}><strong>第 {index + 1} 組</strong><span>{inputType === 'strength' ? `${Number(set.weight) || 0} kg × ${Number(set.reps) || 0} 次` : `${Math.round((Number(set.duration_seconds) || 0) / (inputType === 'cardio' ? 60 : 1))} ${unit}`}</span></div>)}
+      {!entry.sets.length && <div><strong>組數</strong><span>{entry.setCount} 組</span></div>}
+      {entry.note && <p>備註：{entry.note}</p>}
+      {!entry.note && entry.volume > 0 && <p>總訓練量：{entry.volume} kg</p>}
+    </div>}
+  </article>
 }

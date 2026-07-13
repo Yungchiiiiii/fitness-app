@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { isSupabaseConfigured, supabase } from './lib/supabase'
 import HomeScreen from './screens/HomeScreen'
 import TrainingScreen from './screens/TrainingScreen'
 import DietScreen from './screens/DietScreen'
@@ -11,22 +12,49 @@ const TABS = [
   { id: 'coach',    label: 'AI',    icon: SparkleIcon },
 ]
 
-const LOCAL_SESSION = {
-  prototype: true,
-  user: {
-    id: 'local-user',
-    user_metadata: { name: 'Kei' },
-  },
-}
-
 export default function App() {
   const [tab, setTab] = useState('home')
+  const [session, setSession] = useState(null)
+  const [bootError, setBootError] = useState('')
+
+  const connectBackend = async () => {
+    setBootError('')
+    if (!isSupabaseConfigured) {
+      setBootError('雲端設定尚未完成，請稍後再試。')
+      return
+    }
+    const { data: existing, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError) {
+      setBootError(`雲端連線失敗：${sessionError.message}`)
+      return
+    }
+    if (existing.session) {
+      setSession(existing.session)
+      return
+    }
+    const { data, error } = await supabase.auth.signInAnonymously({ options: { data: { name: 'Kei' } } })
+    if (error) {
+      setBootError(`無法建立雲端使用身分：${error.message}`)
+      return
+    }
+    setSession(data.session)
+  }
+
+  useEffect(() => {
+    connectBackend()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (nextSession) setSession(nextSession)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  if (!session) return <CloudBoot error={bootError} onRetry={connectBackend} />
 
   const screens = {
-    home:     <HomeScreen session={LOCAL_SESSION} />,
-    training: <TrainingScreen session={LOCAL_SESSION} />,
-    diet:     <DietScreen session={LOCAL_SESSION} />,
-    coach:    <CoachScreen session={LOCAL_SESSION} />,
+    home:     <HomeScreen session={session} />,
+    training: <TrainingScreen session={session} />,
+    diet:     <DietScreen session={session} />,
+    coach:    <CoachScreen session={session} />,
   }
 
   return (
@@ -45,6 +73,15 @@ export default function App() {
       </nav>
     </div>
   )
+}
+
+function CloudBoot({ error, onRetry }) {
+  return <div className="cloud-boot">
+    <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="訓練日記" />
+    <strong>{error ? '雲端暫時無法連線' : '正在連接訓練紀錄'}</strong>
+    <span>{error || '不需要帳號密碼，系統會自動建立安全的裝置身分。'}</span>
+    {error && <button className="neon-button compact" onClick={onRetry}>重新連線</button>}
+  </div>
 }
 
 // ── Icons ─────────────────────────────────────────────
