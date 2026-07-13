@@ -680,6 +680,13 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .custom-error { color: #ff6961; font-size: 12px; }
 .save-custom-exercise { border-radius: 12px; padding: 13px; background: var(--neon); color: #050505; }
 .save-custom-exercise:disabled { opacity: .4; }
+.cancel-custom-edit { border-radius: 12px; padding: 12px; background: #303034; color: #fff; }
+.custom-swipe-row { position: relative; overflow: hidden; border-bottom: 1px solid rgba(255,255,255,.09); touch-action: pan-y; }
+.custom-swipe-actions { position: absolute; inset: 0 0 0 auto; width: 150px; display: grid; grid-template-columns: 1fr 1fr; }
+.custom-swipe-actions button { color: #fff; font-size: 13px; font-weight: 900; }
+.custom-swipe-actions button:first-child { background: #1688f8; }
+.custom-swipe-actions button:last-child { background: #ff453a; }
+.custom-library-row { position: relative; z-index: 1; background: #000; border-bottom: 0; transition: transform .18s ease; user-select: none; }
 .empty-custom-library { color: var(--ink-3); padding: 20px 0; }
 
 /* ── Edit sheet ───────────────────────────────────── */
@@ -763,10 +770,26 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .cloud-boot img { width: 82px; height: 82px; border-radius: 20px; }
 .cloud-boot strong { font-size: 21px; }
 .cloud-boot span { color: #aaaab0; max-width: 340px; line-height: 1.55; }
+.cloud-primary { margin-top: 8px; padding: 14px 20px; }
+.cloud-secondary { color: #d1d1d6; padding: 10px 14px; text-decoration: underline; text-underline-offset: 4px; }
+.cloud-restore-form { width: min(360px, 88vw); display: grid; gap: 12px; justify-items: stretch; }
+.cloud-restore-form input { width: 100%; border: 1px solid #3a3a3c; border-radius: 14px; background: #1c1c1e; color: #fff; padding: 14px; font-size: 16px; outline: 0; }
+.cloud-restore-form p { color: var(--neon); font-size: 13px; line-height: 1.5; }
+.account-recovery-card { display: grid; gap: 10px; }
+.account-recovery-card > strong { color: var(--ink-1); font-size: 16px; }
+.account-recovery-card p { color: var(--ink-3); font-size: 13px; line-height: 1.55; }
+.account-recovery-card > span { color: var(--orange-d); font-size: 13px; font-weight: 800; overflow-wrap: anywhere; }
+.account-recovery-message { line-height: 1.5; }
+.goal-save-error { margin-top: 10px; color: #ff6961; font-size: 13px; line-height: 1.45; }
 
 .meal-sheet .meal-quick-card { background: #242426; border-color: rgba(255,255,255,.12); box-shadow: none; }
 .meal-sheet .field-label { color: #C7C7CC; }
 .meal-sheet .inp { background: #2C2C2E; }
+.photo-source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.photo-source-grid label { position: relative; display: grid; gap: 4px; border: 1px solid rgba(166,255,50,.24); border-radius: 14px; background: #242426; color: #fff; padding: 14px 12px; text-align: center; cursor: pointer; overflow: hidden; }
+.photo-source-grid span { font-weight: 900; }
+.photo-source-grid small { color: #aaaab0; font-size: 11px; }
+.photo-source-grid input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .coach-quick-prompts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; padding-bottom: 4px; overflow: hidden; }
 .coach-quick-prompt { color: #F7F7F8; background: #242426; border: 1px solid rgba(166,255,50,.28); box-shadow: none; padding: 10px 13px; white-space: normal; text-align: left; line-height: 1.35; }
 

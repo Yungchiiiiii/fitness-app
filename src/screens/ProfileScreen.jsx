@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getProfile, getRecoveryLogs, getWeightLogs, upsertProfile, upsertWeightLog } from '../lib/db'
 import { painLogs, weightLogs as seedWeightLogs } from '../lib/prototypeData'
+import { supabase } from '../lib/supabase'
 
 const initialGoals = {
   height: 166,
@@ -38,6 +39,9 @@ export default function ProfileScreen({ session }) {
   const [goals, setGoals] = useState(loadGoals)
   const [showGoals, setShowGoals] = useState(false)
   const [error, setError] = useState('')
+  const [syncEmail, setSyncEmail] = useState(session?.user?.email || '')
+  const [syncingEmail, setSyncingEmail] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
   const targetText = goals.targets?.join('、') || '尚未選擇目標'
 
   useEffect(() => {
@@ -91,9 +95,8 @@ export default function ProfileScreen({ session }) {
   }
 
   const handleSaveGoals = async (next) => {
-    const normalized = saveGoals(next)
-    setGoals(normalized)
-    setShowGoals(false)
+    const normalized = { ...next, trainingDays: clampTrainingDays(next.trainingDays) }
+    setError('')
     if (!session?.prototype) {
       const { error: saveError } = await upsertProfile({
         id: session.user.id,
@@ -107,8 +110,28 @@ export default function ProfileScreen({ session }) {
         carbs_target: Number(normalized.carbs) || null,
         fat_target: Number(normalized.fat) || null,
       })
-      if (saveError) setError(`儲存目標失敗：${saveError.message}`)
+      if (saveError) {
+        setError(`儲存目標失敗：${saveError.message}`)
+        throw saveError
+      }
     }
+    saveGoals(normalized)
+    setGoals(normalized)
+    setShowGoals(false)
+  }
+
+  const linkRecoveryEmail = async () => {
+    if (!syncEmail.trim() || syncingEmail) return
+    setSyncingEmail(true)
+    setSyncMessage('')
+    const { error: updateError } = await supabase.auth.updateUser(
+      { email: syncEmail.trim() },
+      { emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}` },
+    )
+    setSyncMessage(updateError
+      ? `綁定失敗：${updateError.message}`
+      : '確認信已寄出。請到信箱點開連結，完成後即使刪除捷徑也能找回資料。')
+    setSyncingEmail(false)
   }
 
   return (
@@ -130,9 +153,24 @@ export default function ProfileScreen({ session }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 900, fontSize: 17, color: 'var(--ink-1)' }}>{name}</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>雲端匿名模式 · 不需要帳號密碼</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>{session?.user?.is_anonymous ? '雲端匿名模式 · 建議綁定信箱' : `雲端同步 · ${session?.user?.email || '已綁定'}`}</div>
         </div>
         <span className="pill" style={{ color: 'var(--orange-d)', background: '#FFEDD5' }}>PWA</span>
+      </div>
+
+      <div className="section-title">資料復原</div>
+      <div className="card account-recovery-card">
+        {!session?.user?.is_anonymous ? <>
+          <strong>這份資料已可跨裝置找回</strong>
+          <p>刪除桌面捷徑後重新加入時，選「用信箱找回」即可連回同一份紀錄。</p>
+          <span>{session?.user?.email}</span>
+        </> : <>
+          <strong>綁定信箱，避免捷徑刪除後遺失連線</strong>
+          <p>不用設定密碼；之後會寄一封登入連結到你的信箱。</p>
+          <input className="inp" type="email" inputMode="email" autoComplete="email" placeholder="你的 Email" value={syncEmail} onChange={event => setSyncEmail(event.target.value)} />
+          <button className="btn-primary" disabled={!syncEmail.trim() || syncingEmail} onClick={linkRecoveryEmail}>{syncingEmail ? '寄送中…' : '寄確認信並綁定'}</button>
+          {syncMessage && <span className="account-recovery-message">{syncMessage}</span>}
+        </>}
       </div>
 
       <div className="section-title">每週體重</div>
@@ -192,6 +230,8 @@ export default function ProfileScreen({ session }) {
 
 function GoalSheet({ goals, onClose, onSave }) {
   const [draft, setDraft] = useState(goals)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const recalc = () => {
     const weight = Number(draft.weight) || 60
     const targetSet = new Set(draft.targets || [])
@@ -213,6 +253,17 @@ function GoalSheet({ goals, onClose, onSave }) {
     if (current.has(target)) current.delete(target)
     else current.add(target)
     setDraft({ ...draft, targets: Array.from(current) })
+  }
+  const save = async () => {
+    if (saving) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      await onSave(draft)
+    } catch (error) {
+      setSaveError(error.message || '請稍後再試')
+      setSaving(false)
+    }
   }
 
   return (
@@ -285,7 +336,8 @@ function GoalSheet({ goals, onClose, onSave }) {
             <input className="inp" type="number" placeholder="例如 65" value={draft.fat} onChange={e => setDraft({ ...draft, fat: e.target.value })} />
           </Field>
         </div>
-        <button className="btn-primary" style={{ marginTop: 10 }} onClick={() => onSave(draft)}>套用目標</button>
+        {saveError && <div className="goal-save-error">儲存失敗：{saveError}</div>}
+        <button className="btn-primary" style={{ marginTop: 10 }} disabled={saving} onClick={save}>{saving ? '儲存中…' : '儲存目標'}</button>
       </div>
     </div>
   )

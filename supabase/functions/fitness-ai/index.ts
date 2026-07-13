@@ -156,6 +156,7 @@ async function classifyExercise(body: ExerciseClassificationRequest) {
 只回傳 JSON，不要 markdown 或多餘文字。
 category 只能是 lower、upper、cardio、core 其中一個。
 inputType 只能是 strength、cardio、core 其中一個；lower/upper 使用 strength，有氧使用 cardio，核心使用 core。
+羽球、網球、桌球、游泳、跑步、單車、球類與其他以持續時間記錄的運動，優先分類為 cardio，讓使用者記錄分鐘與選填負重；不要因為主要使用手臂或腿就分到 upper/lower。
 target 請用簡短繁體中文列出主要肌群，例如「股四頭肌、臀大肌」。
 格式：{"category":"lower","target":"股四頭肌、臀大肌","inputType":"strength"}
 使用者輸入：${name}`

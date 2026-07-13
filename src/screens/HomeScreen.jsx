@@ -264,7 +264,7 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
     ...exercise,
     open: false,
     removed: false,
-    sets: (exercise.exercise_sets || []).map(set => ({ ...set })),
+    sets: (exercise.exercise_sets || []).map(set => ({ ...set, duration_min: set.duration_seconds ? Math.round(set.duration_seconds / 60) : '' })),
   })))
   const [saving, setSaving] = useState(false)
 
@@ -272,7 +272,12 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
     ...exercise,
     sets: exercise.sets.map((set, setIndex) => setIndex === index ? { ...set, [field]: value } : set),
   }))
-  const addExerciseSet = exerciseId => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : { ...exercise, sets: [...exercise.sets, { id: null, weight: '', reps: '', order_index: exercise.sets.length }] }))
+  const addExerciseSet = exerciseId => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : {
+    ...exercise,
+    sets: [...exercise.sets, exercise.category === 'cardio'
+      ? { id: null, duration_min: '', weight: '', order_index: exercise.sets.length }
+      : { id: null, weight: '', reps: '', order_index: exercise.sets.length }],
+  }))
   const removeExerciseSet = (exerciseId, index) => setExercises(previous => previous.map(exercise => exercise.id !== exerciseId ? exercise : { ...exercise, sets: exercise.sets.filter((_, setIndex) => setIndex !== index) }))
 
   const save = async () => {
@@ -300,7 +305,13 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
         }
         for (let index = 0; index < exercise.sets.length; index += 1) {
           const set = exercise.sets[index]
-          const payload = { order_index: index, weight: Number(set.weight) || null, reps: Number(set.reps) || null }
+          const cardio = exercise.category === 'cardio'
+          const payload = {
+            order_index: index,
+            weight: Number(set.weight) || null,
+            reps: cardio ? null : Number(set.reps) || null,
+            duration_seconds: cardio ? Math.round((Number(set.duration_min) || 0) * 60) : null,
+          }
           const result = set.id ? await updateSet(set.id, payload) : await createSet({ ...payload, exercise_id: exercise.id })
           if (result.error) throw result.error
         }
@@ -326,11 +337,11 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
           </button>
           <button className="remove-exercise" onClick={() => setExercises(previous => previous.map(item => item.id === exercise.id ? { ...item, removed: true } : item))}>×</button>
           {exercise.open && <div className="edit-sets">
-            <div className="edit-set-head"><span /><span>KG</span><span>次</span><span /></div>
+            <div className="edit-set-head"><span /><span>{exercise.category === 'cardio' ? '分鐘' : 'KG'}</span><span>{exercise.category === 'cardio' ? '負重' : '次'}</span><span /></div>
             {exercise.sets.map((set, index) => <div className="edit-set-row" key={set.id || index}>
               <span>{index + 1}</span>
-              <input type="number" value={set.weight ?? ''} onChange={event => updateExerciseSet(exercise.id, index, 'weight', event.target.value)} />
-              <input type="number" value={set.reps ?? ''} onChange={event => updateExerciseSet(exercise.id, index, 'reps', event.target.value)} />
+              <input type="number" value={exercise.category === 'cardio' ? set.duration_min ?? '' : set.weight ?? ''} onChange={event => updateExerciseSet(exercise.id, index, exercise.category === 'cardio' ? 'duration_min' : 'weight', event.target.value)} />
+              <input type="number" value={exercise.category === 'cardio' ? set.weight ?? '' : set.reps ?? ''} onChange={event => updateExerciseSet(exercise.id, index, exercise.category === 'cardio' ? 'weight' : 'reps', event.target.value)} />
               <button onClick={() => removeExerciseSet(exercise.id, index)}>×</button>
             </div>)}
             <button className="edit-add-set" onClick={() => addExerciseSet(exercise.id)}>+ 加一組</button>

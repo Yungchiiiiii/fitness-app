@@ -48,5 +48,7 @@ export async function classifyExerciseWithAI(name) {
   if (error) throw new Error(error.message || 'AI 分類失敗')
   const classification = data?.classification
   if (!classification?.category || !classification?.target) throw new Error('AI 沒有回傳有效分類')
+  const durationSport = /(羽球|網球|桌球|壁球|籃球|排球|足球|棒球|壘球|游泳|跑步|慢跑|健走|單車|自行車|跳繩|有氧舞蹈|拳擊|登山|爬山)/.test(cleanName)
+  if (durationSport) return { ...classification, category: 'cardio', inputType: 'cardio' }
   return classification
 }
