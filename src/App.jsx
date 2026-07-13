@@ -1,6 +1,4 @@
-import { useState, useEffect } from 'react'
-import { isSupabaseConfigured, supabase } from './lib/supabase'
-import AuthScreen from './screens/AuthScreen'
+import { useState } from 'react'
 import HomeScreen from './screens/HomeScreen'
 import TrainingScreen from './screens/TrainingScreen'
 import DietScreen from './screens/DietScreen'
@@ -13,41 +11,22 @@ const TABS = [
   { id: 'coach',    label: 'AI',    icon: SparkleIcon },
 ]
 
+const LOCAL_SESSION = {
+  prototype: true,
+  user: {
+    id: 'local-user',
+    user_metadata: { name: 'Kei' },
+  },
+}
+
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [demoSession, setDemoSession] = useState(null)
-  const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('home')
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setLoading(false)
-      return undefined
-    }
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session)
-      setLoading(false)
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
-    return () => subscription.unsubscribe()
-  }, [])
-
-  if (loading) return <Splash />
-  const activeSession = demoSession || session
-  if (!activeSession) return <AuthScreen backendReady={isSupabaseConfigured} onDemo={() => setDemoSession({
-    prototype: true,
-    user: {
-      id: '00000000-0000-0000-0000-000000000000',
-      email: 'demo@fitness.local',
-      user_metadata: { name: 'Kei' },
-    },
-  })} />
-
   const screens = {
-    home:     <HomeScreen session={activeSession} />,
-    training: <TrainingScreen session={activeSession} />,
-    diet:     <DietScreen session={activeSession} />,
-    coach:    <CoachScreen session={activeSession} />,
+    home:     <HomeScreen session={LOCAL_SESSION} />,
+    training: <TrainingScreen session={LOCAL_SESSION} />,
+    diet:     <DietScreen session={LOCAL_SESSION} />,
+    coach:    <CoachScreen session={LOCAL_SESSION} />,
   }
 
   return (
@@ -64,15 +43,6 @@ export default function App() {
           </button>
         ))}
       </nav>
-    </div>
-  )
-}
-
-function Splash() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: 12 }}>
-      <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="訓練日記" style={{ width: 74, height: 74, borderRadius: 22 }} />
-      <div className="display" style={{ fontSize: 20, fontWeight: 700, color: 'var(--blue)' }}>訓練日記</div>
     </div>
   )
 }

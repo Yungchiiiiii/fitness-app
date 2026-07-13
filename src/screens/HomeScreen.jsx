@@ -25,7 +25,7 @@ export default function HomeScreen({ session }) {
   const today = useMemo(() => new Date(), [])
   const todayString = isoDate(today)
   const name = session?.user?.user_metadata?.name || '你'
-  const [sessions, setSessions] = useState(prototypeOnly ? demoSessions : [])
+  const [sessions, setSessions] = useState(() => prototypeOnly ? loadLocalSessions() : [])
   const [nutrition, setNutrition] = useState(null)
   const [profile, setProfile] = useState(null)
   const [showBuilder, setShowBuilder] = useState(false)
@@ -52,6 +52,11 @@ export default function HomeScreen({ session }) {
       setProfile(profileResult.data || null)
     })
   }, [prototypeOnly, session.user.id, todayString])
+
+  useEffect(() => {
+    if (!prototypeOnly) return
+    window.localStorage.setItem('fitness-diary-sessions', JSON.stringify(sessions))
+  }, [prototypeOnly, sessions])
 
   const days = useMemo(() => groupByDay(sessions), [sessions])
   const months = useMemo(() => groupByMonth(days), [days])
@@ -372,6 +377,15 @@ function getCurrentWeek(today) {
 
 function readTargetDays() {
   try { return Number(JSON.parse(localStorage.getItem('fitness-goals'))?.trainingDays) || 3 } catch { return 3 }
+}
+
+function loadLocalSessions() {
+  try {
+    const saved = window.localStorage.getItem('fitness-diary-sessions')
+    return saved ? JSON.parse(saved) : demoSessions
+  } catch {
+    return demoSessions
+  }
 }
 
 function formatDate(value) { return new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'long', day: 'numeric' }) }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getProfile, getRecoveryLogs, getWeightLogs, signOut, upsertProfile, upsertWeightLog } from '../lib/db'
+import { getProfile, getRecoveryLogs, getWeightLogs, upsertProfile, upsertWeightLog } from '../lib/db'
 import { painLogs, weightLogs as seedWeightLogs } from '../lib/prototypeData'
 
 const initialGoals = {
@@ -32,7 +32,6 @@ const saveGoals = (goals) => {
 
 export default function ProfileScreen({ session }) {
   const name = session?.user?.user_metadata?.name || '使用者'
-  const email = session?.user?.email
   const [weeklyWeight, setWeeklyWeight] = useState('60.0')
   const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
   const [recovery, setRecovery] = useState(painLogs)
@@ -131,7 +130,7 @@ export default function ProfileScreen({ session }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 900, fontSize: 17, color: 'var(--ink-1)' }}>{name}</div>
-          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>
+          <div style={{ fontSize: 13, color: 'var(--ink-3)', marginTop: 2 }}>本機使用模式 · 不需要登入</div>
         </div>
         <span className="pill" style={{ color: 'var(--orange-d)', background: '#FFEDD5' }}>PWA</span>
       </div>
@@ -185,8 +184,6 @@ export default function ProfileScreen({ session }) {
           AI 建議：你的目標偏維持體重並提升表現，不要把熱量壓太低。蛋白質約每公斤 1.6-2g，訓練日前後提高碳水會更有感。
         </div>
       </div>
-
-      <button className="btn-ghost" style={{ marginTop: 24 }} onClick={() => signOut()}>登出</button>
 
       {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={handleSaveGoals} />}
     </div>

@@ -1,16 +1,5 @@
 import { supabase } from './supabase'
 
-// ── Auth ──────────────────────────────────────────────
-export const signUp = (email, password, name) =>
-  supabase.auth.signUp({ email, password, options: { data: { name } } })
-
-export const signIn = (email, password) =>
-  supabase.auth.signInWithPassword({ email, password })
-
-export const signOut = () => supabase.auth.signOut()
-
-export const getUser = () => supabase.auth.getUser()
-
 // ── Profile ───────────────────────────────────────────
 export const getProfile = (userId) =>
   supabase
