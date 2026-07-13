@@ -115,7 +115,6 @@ export default function ProfileScreen({ session }) {
         setError(`儲存目標失敗：${saveError.message}`)
         throw saveError
       }
-
       const { data: savedProfile, error: verifyError } = await getProfile(session.user.id)
       if (verifyError || !savedProfile) {
         const message = verifyError?.message || '雲端沒有回傳已儲存的目標'
