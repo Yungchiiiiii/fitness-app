@@ -1,41 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getProfile, getWeightLogs, updateProfile, upsertWeightLog } from '../lib/db'
-import { weightLogs as seedWeightLogs } from '../lib/prototypeData'
 import { supabase } from '../lib/supabase'
-
-const initialGoals = {
-  height: 166,
-  weight: 60,
-  targets: ['增肌', '維持體重', '提升運動表現'],
-  trainingDays: 5,
-  calories: 2200,
-  protein: 110,
-  carbs: 285,
-  fat: 65,
-}
+import { calculateNutritionTargets, emptyProfileGoals, profileToGoals } from '../lib/profile'
 
 const clampTrainingDays = (value) => Math.max(1, Math.min(7, Number(value) || 1))
 const goalStorageKey = userId => `fitness-goals:${userId}`
 const loadGoals = (userId) => {
   try {
     const saved = window.localStorage.getItem(goalStorageKey(userId))
-    if (!saved) return initialGoals
-    return { ...initialGoals, ...JSON.parse(saved) }
+    if (!saved) return emptyProfileGoals
+    return { ...emptyProfileGoals, ...JSON.parse(saved) }
   } catch {
-    return initialGoals
+    return emptyProfileGoals
   }
 }
-const saveGoals = (goals, userId) => {
+const saveGoals = (goals, userId, name) => {
   const normalized = { ...goals, trainingDays: clampTrainingDays(goals.trainingDays) }
   window.localStorage.setItem(goalStorageKey(userId), JSON.stringify(normalized))
-  window.dispatchEvent(new CustomEvent('fitness-goals-updated', { detail: normalized }))
+  window.dispatchEvent(new CustomEvent('fitness-goals-updated', { detail: { ...normalized, name } }))
   return normalized
 }
 
 export default function ProfileScreen({ session }) {
-  const name = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || '使用者'
-  const [weeklyWeight, setWeeklyWeight] = useState('60.0')
-  const [logs, setLogs] = useState(seedWeightLogs.map((l, i) => ({ ...l, weight: [60.8, 60.6, 60.4, 60.3, 60.2, 60.1, 60.0][i] })))
+  const [name, setName] = useState(session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || '')
+  const [weeklyWeight, setWeeklyWeight] = useState('')
+  const [logs, setLogs] = useState([])
   const [goals, setGoals] = useState(() => loadGoals(session.user.id))
   const [showGoals, setShowGoals] = useState(false)
   const [error, setError] = useState('')
@@ -51,17 +40,9 @@ export default function ProfileScreen({ session }) {
       if (cancelled) return
       if (profileResult.data) {
         const profile = profileResult.data
-        setGoals(prev => ({
-          ...prev,
-          height: profile.height_cm ?? prev.height,
-          weight: profile.weight_kg ?? prev.weight,
-          targets: profile.targets?.length ? profile.targets : prev.targets,
-          trainingDays: profile.training_days ?? prev.trainingDays,
-          calories: profile.calories_target ?? prev.calories,
-          protein: profile.protein_target ?? prev.protein,
-          carbs: profile.carbs_target ?? prev.carbs,
-          fat: profile.fat_target ?? prev.fat,
-        }))
+        setName(profile.display_name || '')
+        setGoals(profileToGoals(profile))
+        setWeeklyWeight(String(profile.weight_kg ?? ''))
       }
       if (!weightResult.error && weightResult.data?.length) {
         setLogs(weightResult.data.map(log => ({
@@ -89,16 +70,18 @@ export default function ProfileScreen({ session }) {
     }
   }
 
-  const handleSaveGoals = async (next) => {
+  const handleSaveGoals = async (next, nextName) => {
     const normalized = { ...next, trainingDays: clampTrainingDays(next.trainingDays) }
+    const normalizedName = nextName.trim()
     setError('')
-    saveGoals(normalized, session.user.id)
+    saveGoals(normalized, session.user.id, normalizedName)
     setGoals(normalized)
+    setName(normalizedName)
     setShowGoals(false)
     if (!session?.prototype) {
       const { error: saveError } = await updateProfile({
         id: session.user.id,
-        display_name: name,
+        display_name: normalizedName,
         height_cm: Number(normalized.height) || null,
         weight_kg: Number(normalized.weight) || null,
         targets: normalized.targets || [],
@@ -118,6 +101,7 @@ export default function ProfileScreen({ session }) {
         setError(`目標已保存在這台裝置，但雲端同步失敗：${message}`)
         throw new Error(message)
       }
+      await supabase.auth.updateUser({ data: { name: normalizedName, full_name: normalizedName } })
     }
   }
 
@@ -161,12 +145,12 @@ export default function ProfileScreen({ session }) {
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 }}>
           <div>
-            <div className="display" style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-1)' }}>{logs.at(-1)?.weight}kg</div>
-            <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 2 }}>最近 7 週 {trend > 0 ? '+' : ''}{trend}kg</div>
+            <div className="display" style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-1)' }}>{logs.length ? `${logs.at(-1)?.weight}kg` : '尚無紀錄'}</div>
+            <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 2 }}>{logs.length > 1 ? `最近紀錄 ${trend > 0 ? '+' : ''}${trend}kg` : '輸入本週體重開始追蹤'}</div>
           </div>
           <span className="pill" style={{ color: '#B45309', background: '#FEF3C7' }}>維持區間</span>
         </div>
-        <WeightChart logs={logs} />
+        {!!logs.length && <WeightChart logs={logs} />}
       </div>
 
       <div className="section-title">目標設定</div>
@@ -189,30 +173,18 @@ export default function ProfileScreen({ session }) {
         </div>
       </div>
 
-      {showGoals && <GoalSheet goals={goals} onClose={() => setShowGoals(false)} onSave={handleSaveGoals} />}
+      {showGoals && <GoalSheet name={name} goals={goals} onClose={() => setShowGoals(false)} onSave={handleSaveGoals} />}
     </div>
   )
 }
 
-function GoalSheet({ goals, onClose, onSave }) {
+function GoalSheet({ name, goals, onClose, onSave }) {
+  const [draftName, setDraftName] = useState(name)
   const [draft, setDraft] = useState(goals)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const recalc = () => {
-    const weight = Number(draft.weight) || 60
-    const targetSet = new Set(draft.targets || [])
-    const performanceBoost = targetSet.has('提升運動表現') ? 180 : 0
-    const deficit = targetSet.has('減脂') ? -220 : 0
-    const surplus = targetSet.has('增肌') ? 160 : 0
-    const calories = Math.round(weight * 33 + performanceBoost)
-    const adjustedCalories = calories + deficit + surplus
-    setDraft({
-      ...draft,
-      calories: adjustedCalories,
-      protein: Math.round(weight * 1.8),
-      carbs: Math.round((adjustedCalories * 0.52) / 4),
-      fat: Math.round((adjustedCalories * 0.26) / 9),
-    })
+    setDraft(calculateNutritionTargets(draft))
   }
   const toggleTarget = (target) => {
     const current = new Set(draft.targets || [])
@@ -225,7 +197,8 @@ function GoalSheet({ goals, onClose, onSave }) {
     setSaving(true)
     setSaveError('')
     try {
-      await onSave(draft)
+      if (!draftName.trim()) throw new Error('請先輸入名字')
+      await onSave(draft, draftName)
     } catch (error) {
       setSaveError(error.message || '請稍後再試')
       setSaving(false)
@@ -239,6 +212,11 @@ function GoalSheet({ goals, onClose, onSave }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="display" style={{ fontSize: 22, fontWeight: 900, color: 'var(--ink-1)' }}>編輯目標</div>
           <button onClick={onClose} style={{ color: 'var(--ink-3)', fontSize: 22 }}>×</button>
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <Field label="名字">
+            <input className="inp" maxLength="30" placeholder="你的名字" value={draftName} onChange={e => setDraftName(e.target.value)} />
+          </Field>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
           <Field label="身高" suffix="cm">
