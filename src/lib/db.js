@@ -11,12 +11,27 @@ export const getProfile = (userId) =>
 export const updateProfile = ({ id, ...updates }) =>
   supabase.from('profiles').update(updates).eq('id', id).select('id').single()
 
-export const upsertProfile = (profile) =>
-  supabase
+const profileSelect = 'id, display_name, height_cm, weight_kg, targets, training_days, calories_target, protein_target, carbs_target, fat_target, profile_setup_version, created_at, updated_at'
+
+export const upsertProfile = async ({ id, ...profile }) => {
+  // Updating first avoids asking PostgREST to update the primary key as part of
+  // an ON CONFLICT upsert. The profiles table intentionally keeps that column
+  // outside its update grants so legacy sensitive fields remain locked down.
+  const updated = await supabase
     .from('profiles')
-    .upsert(profile, { onConflict: 'id' })
-    .select('id, display_name, height_cm, weight_kg, targets, training_days, calories_target, protein_target, carbs_target, fat_target, profile_setup_version, created_at, updated_at')
+    .update(profile)
+    .eq('id', id)
+    .select(profileSelect)
+    .maybeSingle()
+
+  if (updated.error || updated.data) return updated
+
+  return supabase
+    .from('profiles')
+    .insert({ id, ...profile })
+    .select(profileSelect)
     .single()
+}
 
 // ── Workout Sessions ──────────────────────────────────
 export const getSessions = (userId) =>

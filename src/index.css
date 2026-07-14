@@ -258,7 +258,7 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .setup-macros small { color: #919198; font-size: 11px; margin-left: 2px; }
 .setup-note { margin-top: 12px; color: #85858c; font-size: 11px; line-height: 1.5; }
 .setup-error { color: #ff6b6b; background: rgba(255,69,58,.12); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; }
-.setup-actions { display: flex; gap: 10px; padding: 12px 0 4px; position: sticky; bottom: 0; background: linear-gradient(transparent, #050506 24%); }
+.setup-actions { display: flex; gap: 10px; padding: 12px 0 4px; position: sticky; bottom: 0; background: transparent; }
 .setup-actions button { min-height: 54px; border-radius: 17px; font-size: 15px; }
 .setup-back { width: 32%; color: #d1d1d6; background: #222225; }
 .setup-next { flex: 1; color: #050505; background: var(--neon); box-shadow: 0 12px 34px rgba(166,255,50,.14); }
