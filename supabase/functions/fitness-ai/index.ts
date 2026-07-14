@@ -24,6 +24,12 @@ type ExerciseClassificationRequest = {
   name: string
 }
 
+type ExerciseImageAnalysisRequest = {
+  task: 'exercise-image-analysis'
+  description?: string
+  images?: Array<{ mimeType: string; data: string }>
+}
+
 const geminiKey = Deno.env.get('GEMINI_API_KEY')
 const groqKey = Deno.env.get('GROQ_API_KEY')
 const geminiModel = 'gemini-3.5-flash'
@@ -35,7 +41,7 @@ Deno.serve(async (req) => {
 
   try {
     const { client, user } = await requireUser(req)
-    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest
+    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest | ExerciseImageAnalysisRequest
 
     if (body.task === 'food-analysis') {
       const meal = await analyzeFood(body)
@@ -57,6 +63,14 @@ Deno.serve(async (req) => {
     }
     if (body.task === 'exercise-classification') {
       return json({ classification: await classifyExercise(body) })
+    }
+    if (body.task === 'exercise-image-analysis') {
+      const exercise = await analyzeExerciseImage(body)
+      await logAiEvent(client, user.id, 'exercise-image-analysis', {
+        description: body.description?.slice(0, 500) || '',
+        imageCount: getExerciseImages(body).length,
+      }, exercise)
+      return json({ exercise })
     }
     return json({ error: 'Unknown task' }, 400)
   } catch (error) {
@@ -226,6 +240,83 @@ target 請用簡短繁體中文列出主要肌群，例如「股四頭肌、臀�
     target: String(parsed.target || '全身肌群').slice(0, 80),
     inputType,
   }
+}
+
+async function analyzeExerciseImage(body: ExerciseImageAnalysisRequest) {
+  if (!geminiKey && !groqKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
+  const images = getExerciseImages(body)
+  const description = body.description?.trim() || ''
+  if (!images.length && !description) throw new HttpError('請拍攝器械、上傳動作照片，或輸入簡短描述。', 400)
+
+  const instruction = `你是專業健身器械與運動動作辨識助手。請根據所有照片與使用者描述，辨識照片中的主要器械，或人物正在做的主要動作，並使用台灣健身房常用的正式繁體中文名稱。
+
+辨識規則：
+1. 若是器械照片，綜合器械外型、把手、座椅、配重、運動軌跡、可見品牌與型號文字判斷；name 填最通用且專業的器械／動作名稱，例如「坐姿腿屈伸」而不是「練腿那台」。
+2. 若是人物動作照片，根據身體姿勢、器材、握法與運動方向判斷動作；不要辨識或描述人物身分、年齡、外貌或其他個人特徵。
+3. 同一照片可能出現多台器械或旁人，只選畫面主體。證據不足時可以採用較通用的名稱，note 說明不確定處，不可捏造品牌或型號。
+4. category 只能是 lower、upper、cardio、core；inputType 只能是 strength、cardio、core。lower/upper 通常是 strength，有氧器械與持續性運動用 cardio，計時核心動作用 core。
+5. target 用簡短繁體中文列出主要肌群。equipment 填器械類型或照片中可確認的品牌／型號；無法確認就填通用器械名稱。
+6. confidence 填 0 到 1。照片沒有器械、沒有可辨識運動動作，或內容不清楚時 detected 必須是 false，不要硬猜。
+
+只回傳 JSON，不要 markdown 或其他文字：
+{"detected":true,"kind":"equipment或exercise","name":"正式繁體中文名稱","category":"lower","target":"股四頭肌、臀大肌","inputType":"strength","equipment":"器械或品牌型號","confidence":0.85,"note":"簡短辨識依據或不確定處"}
+
+使用者描述：${description || '無'}`
+
+  let text: string
+  try {
+    if (groqKey) {
+      const content: Array<Record<string, unknown>> = [{ type: 'text', text: instruction }]
+      for (const image of images) {
+        content.push({ type: 'image_url', image_url: { url: `data:${image.mimeType || 'image/jpeg'};base64,${image.data}` } })
+      }
+      text = await callGroq([
+        { role: 'system', content: '你是精確、保守的健身器械與運動動作圖片辨識助手。' },
+        { role: 'user', content },
+      ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
+    } else {
+      const parts: Array<Record<string, unknown>> = [{ text: instruction }]
+      for (const image of images) parts.push({ inline_data: { mime_type: image.mimeType || 'image/jpeg', data: image.data } })
+      text = await callGemini(parts)
+    }
+  } catch (error) {
+    throw friendlyExerciseAiError(error)
+  }
+
+  return normalizeExerciseAnalysis(parseJson(text))
+}
+
+function friendlyExerciseAiError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/\b429\b|rate.?limit|quota|resource.?exhausted/i.test(message)) {
+    return new HttpError('AI 圖片辨識額度暫時已達上限，請稍後再試，或先輸入器械／動作描述讓 AI 分類。', 429)
+  }
+  if (/\b401\b|\b403\b|api.?key|permission/i.test(message)) {
+    return new HttpError('AI 圖片辨識服務目前無法使用，請先輸入器械／動作描述建立運動。', 503)
+  }
+  return new HttpError('AI 暫時無法辨識這張照片，請換一張清楚的照片，或改用文字描述。', 503)
+}
+
+function normalizeExerciseAnalysis(parsed: Record<string, unknown>) {
+  const detected = parsed.detected !== false
+  const category = ['lower', 'upper', 'cardio', 'core'].includes(String(parsed.category)) ? String(parsed.category) : 'upper'
+  const inputType = category === 'cardio' ? 'cardio' : category === 'core' ? 'core' : 'strength'
+  const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0))
+  return {
+    detected,
+    kind: parsed.kind === 'equipment' ? 'equipment' : 'exercise',
+    name: String(parsed.name || (detected ? '未命名運動' : '')).slice(0, 100),
+    category,
+    target: String(parsed.target || '全身肌群').slice(0, 100),
+    inputType,
+    equipment: String(parsed.equipment || '').slice(0, 120),
+    confidence,
+    note: String(parsed.note || (detected ? '由 AI 依照片辨識，請在儲存前確認。' : '照片中沒有可辨識的器械或運動動作。')).slice(0, 300),
+  }
+}
+
+function getExerciseImages(body: ExerciseImageAnalysisRequest) {
+  return (Array.isArray(body.images) ? body.images : []).filter(image => image?.data).slice(0, 2)
 }
 
 async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
