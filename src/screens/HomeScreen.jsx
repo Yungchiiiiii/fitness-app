@@ -342,7 +342,7 @@ function EditDaySheet({ day, prototypeOnly, onClose, onPrototypeSaved, onSaved }
       <label><span>訓練名稱 / 部位</span><input value={name} onChange={event => setName(event.target.value)} placeholder="例如：有氧 + 下肢" /></label>
       <div className="edit-list-label">動作清單</div>
       <div className="edit-exercise-list">
-        {exercises.map(exercise => !exercise.removed && <div className="edit-exercise" key={exercise.id}>
+        {exercises.map((exercise, index) => !exercise.removed && <div className="edit-exercise is-wiggling" style={{ '--wiggle-delay': `${index * -27}ms` }} key={exercise.id}>
           <button className="edit-exercise-row" onClick={() => setExercises(previous => previous.map(item => item.id === exercise.id ? { ...item, open: !item.open } : item))}>
             <strong>{exercise.name}</strong><span>{exercise.sets.length} 組</span><i>›</i>
           </button>

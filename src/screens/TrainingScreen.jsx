@@ -64,6 +64,12 @@ export default function TrainingScreen({ session }) {
       volume: Number(row.total_volume) || 0,
     }
   }), [inputType, progress, selected, sessions])
+  const exerciseSetCounts = useMemo(() => sessions.reduce((counts, workout) => {
+    for (const exercise of workout.session_exercises || []) {
+      counts[exercise.name] = (counts[exercise.name] || 0) + (exercise.exercise_sets?.length || 0)
+    }
+    return counts
+  }, {}), [sessions])
   const latest = history.at(-1)
 
   return <div className="screen-fade training-history">
@@ -92,7 +98,7 @@ export default function TrainingScreen({ session }) {
       {history.slice().reverse().map(entry => <RecordCard key={entry.key} entry={entry} unit={unit} inputType={inputType} />)}
     </div>
 
-    {showPicker && <ExercisePicker category={category} selected={selected} customExercises={customExercises} hiddenExerciseNames={hiddenExerciseNames} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
+    {showPicker && <ExercisePicker category={category} selected={selected} setCounts={exerciseSetCounts} customExercises={customExercises} hiddenExerciseNames={hiddenExerciseNames} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
   </div>
 }
 
@@ -117,7 +123,7 @@ function ProgressLine({ data, unit }) {
   </svg>
 }
 
-function ExercisePicker({ category, selected, customExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
+function ExercisePicker({ category, selected, setCounts, customExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
   const builtIn = (WORLD_GYM_LIBRARY[category] || []).map(item => item.name)
   const custom = customExercises.filter(item => item.category === category).map(item => item.name)
   const names = [...new Set([...custom, ...builtIn])].filter(name => !hiddenExerciseNames.includes(name))
@@ -128,8 +134,14 @@ function ExercisePicker({ category, selected, customExercises, hiddenExerciseNam
       <div className="picker-category-grid">
         {categoryKeys.map(key => <button key={key} className={`picker-choice ${category === key ? 'active' : ''}`} onClick={() => onCategory(key)}>{CATEGORY_META[key].label}</button>)}
       </div>
-      <div className="picker-exercise-list">
-        {names.map(name => <button key={name} className={`picker-exercise ${selected === name ? 'active' : ''}`} onClick={() => onSelect(name)}><span>{name}</span><span>{selected === name ? '目前顯示' : '›'}</span></button>)}
+      <div className="picker-exercise-list motion-panel" key={category}>
+        {names.map(name => {
+          const count = setCounts[name] || 0
+          return <button key={name} className={`picker-exercise ${selected === name ? 'active' : ''}`} onClick={() => onSelect(name)}>
+            <span>{name}</span>
+            <span className="exercise-record-meta"><b className={count ? 'has-records' : ''}>{count} 組</b><i>{selected === name ? '目前顯示' : '›'}</i></span>
+          </button>
+        })}
       </div>
     </section>
   </div>

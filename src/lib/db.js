@@ -121,6 +121,35 @@ export const getDailyNutrition = (userId, from, to) =>
     .lte('date', to)
     .order('date', { ascending: true })
 
+// ── Frequent foods ───────────────────────────────────
+export const getFrequentFoods = (userId) =>
+  supabase
+    .from('frequent_foods')
+    .select('*')
+    .eq('user_id', userId)
+    .order('meal', { ascending: true })
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true })
+
+export const createFrequentFood = (food) =>
+  supabase.from('frequent_foods').insert(food).select().single()
+
+export const updateFrequentFood = (id, updates) =>
+  supabase.from('frequent_foods').update(updates).eq('id', id).select().single()
+
+export const deleteFrequentFood = (id) =>
+  supabase.from('frequent_foods').delete().eq('id', id)
+
+export const getFrequentFoodsInitialized = (userId) =>
+  supabase.from('profiles').select('frequent_foods_initialized').eq('id', userId).single()
+
+export const initializeFrequentFoods = async (userId, foods) => {
+  const rows = foods.map((food, index) => ({ ...food, user_id: userId, sort_order: index }))
+  const insertResult = await supabase.from('frequent_foods').upsert(rows, { onConflict: 'user_id,meal,name' })
+  if (insertResult.error) return insertResult
+  return supabase.from('profiles').update({ frequent_foods_initialized: true }).eq('id', userId)
+}
+
 export const getExerciseProgress = (userId, exerciseName) => {
   let query = supabase
     .from('v_exercise_progress')

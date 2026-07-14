@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { analyzeFoodWithGemini } from '../lib/ai'
-import { createFoodLog, deleteFoodLog, getFoodLogsRange } from '../lib/db'
-import { frequentFoods, mealCalendar } from '../lib/prototypeData'
+import {
+  createFoodLog,
+  createFrequentFood,
+  deleteFoodLog,
+  deleteFrequentFood,
+  getFoodLogsRange,
+  getFrequentFoods,
+  getFrequentFoodsInitialized,
+  initializeFrequentFoods,
+  updateFrequentFood,
+} from '../lib/db'
+import { frequentFoods as defaultFrequentFoods, mealCalendar } from '../lib/prototypeData'
 
 const today = new Date()
 const todayDay = today.getDate()
@@ -15,6 +25,7 @@ export default function DietScreen({ session }) {
   const [selectedDay, setSelectedDay] = useState(todayDay)
   const [showAdd, setShowAdd] = useState(false)
   const [calendar, setCalendar] = useState(prototypeOnly ? mealCalendar : {})
+  const [frequentFoods, setFrequentFoods] = useState(() => defaultFrequentFoods.map((food, index) => ({ ...food, id: `prototype-default-${index}` })))
   const [loading, setLoading] = useState(!prototypeOnly)
   const [error, setError] = useState('')
   const day = calendar[selectedDay] || emptyDay
@@ -31,7 +42,26 @@ export default function DietScreen({ session }) {
     setLoading(false)
   }
 
-  useEffect(() => { reload() }, [session?.user?.id, prototypeOnly])
+  const reloadFrequentFoods = async () => {
+    if (prototypeOnly || !session?.user?.id) return
+    const initializedResult = await getFrequentFoodsInitialized(session.user.id)
+    if (initializedResult.error) {
+      setError(`讀取常吃食物失敗：${initializedResult.error.message}`)
+      return
+    }
+    if (!initializedResult.data?.frequent_foods_initialized) {
+      const initializeResult = await initializeFrequentFoods(session.user.id, defaultFrequentFoods)
+      if (initializeResult.error) {
+        setError(`建立常吃食物失敗：${initializeResult.error.message}`)
+        return
+      }
+    }
+    const { data, error: frequentError } = await getFrequentFoods(session.user.id)
+    if (frequentError) setError(`讀取常吃食物失敗：${frequentError.message}`)
+    else setFrequentFoods(data || [])
+  }
+
+  useEffect(() => { reload(); reloadFrequentFoods() }, [session?.user?.id, prototypeOnly])
 
   const addMeal = async (meal) => {
     const normalized = normalizeMeal(meal)
@@ -103,6 +133,36 @@ export default function DietScreen({ session }) {
       }
     })
   }
+
+  const saveFrequentFood = async food => {
+    const normalized = normalizeFrequentFood(food)
+    if (prototypeOnly) {
+      setFrequentFoods(current => food.id
+        ? current.map(item => item.id === food.id ? { ...item, ...normalized, id: food.id } : item)
+        : [...current, { ...normalized, id: `prototype-${Date.now()}` }])
+      return { ok: true }
+    }
+    const payload = { ...normalized, user_id: session.user.id }
+    const result = food.id
+      ? await updateFrequentFood(food.id, normalized)
+      : await createFrequentFood(payload)
+    if (result.error) {
+      setError(`儲存常吃食物失敗：${result.error.message}`)
+      return { ok: false }
+    }
+    await reloadFrequentFoods()
+    return { ok: true }
+  }
+
+  const removeFrequentFood = async food => {
+    if (prototypeOnly) {
+      setFrequentFoods(current => current.filter(item => item !== food && item.id !== food.id))
+      return
+    }
+    const { error: removeError } = await deleteFrequentFood(food.id)
+    if (removeError) setError(`刪除常吃食物失敗：${removeError.message}`)
+    else await reloadFrequentFoods()
+  }
   return (
     <div className="screen-fade">
       <div style={{ padding: '8px 4px 4px' }}>
@@ -142,14 +202,9 @@ export default function DietScreen({ session }) {
       <div className="section-title">當日飲食</div>
       {loading && <div className="card" style={{ color: 'var(--ink-3)', fontSize: 13 }}>正在讀取雲端紀錄...</div>}
       {error && <div className="card" style={{ color: '#DC2626', fontSize: 13, lineHeight: 1.5 }}>{error}</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {day.meals.map((meal, idx) => (
-          <SwipeMealCard
-            key={`${meal.name}-${idx}`}
-            meal={meal}
-            onDelete={() => deleteMeal(idx)}
-          />
-        ))}
+      <div className="meal-group-list">
+        {groupMealsByType(day.meals).map(group => <MealGroupCard key={group.type} group={group} onDelete={deleteMeal} />)}
+        {!day.meals.length && !loading && <div className="card meal-empty">這一天還沒有餐點紀錄。</div>}
       </div>
 
       <button className="cta-card" style={{ marginTop: 16 }} onClick={() => setShowAdd(true)}>
@@ -160,7 +215,7 @@ export default function DietScreen({ session }) {
         <div style={{ width: 42, height: 42, borderRadius: 14, background: 'rgba(255,255,255,0.22)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 20, fontWeight: 900 }}>+</div>
       </button>
 
-      {showAdd && <AddMealSheet onClose={() => setShowAdd(false)} onAdd={addMeal} />}
+      {showAdd && <AddMealSheet frequentFoods={frequentFoods} onSaveFrequentFood={saveFrequentFood} onDeleteFrequentFood={removeFrequentFood} onClose={() => setShowAdd(false)} onAdd={addMeal} />}
     </div>
   )
 }
@@ -222,9 +277,48 @@ function groupFoodLogs(logs) {
   }, {})
 }
 
-function AddMealSheet({ onClose, onAdd }) {
+function normalizeFrequentFood(food) {
+  return {
+    meal: mealTypes.includes(food.meal) ? food.meal : '點心',
+    name: String(food.name || '').trim(),
+    kcal: Number(food.kcal) || 0,
+    protein: Number(food.protein) || 0,
+    carbs: Number(food.carbs) || 0,
+    fat: Number(food.fat) || 0,
+  }
+}
+
+function groupMealsByType(meals) {
+  return mealTypes.map(type => ({
+    type,
+    items: meals.map((meal, index) => ({ meal, index })).filter(item => item.meal.name === type),
+  })).filter(group => group.items.length)
+}
+
+function MealGroupCard({ group, onDelete }) {
+  const [open, setOpen] = useState(false)
+  const protein = group.items.reduce((sum, item) => sum + item.meal.protein, 0)
+  const kcal = group.items.reduce((sum, item) => sum + item.meal.kcal, 0)
+  return <section className={`meal-group-card ${open ? 'open' : ''}`}>
+    <button className="meal-group-summary" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+      <span><strong>{group.type}</strong><small>{group.items.length} 項餐點</small></span>
+      <span><strong>P {protein}g</strong><small>{kcal} kcal</small><i>{open ? '⌃' : '⌄'}</i></span>
+    </button>
+    {open && <div className="meal-group-details">
+      {group.items.map(({ meal, index }) => <div className="meal-detail-row" key={meal.id || `${meal.food}-${index}`}>
+        <span><strong>{meal.food}</strong><small>P {meal.protein}g · {meal.kcal} kcal{meal.note ? ` · ${meal.note}` : ''}</small></span>
+        <button onClick={() => onDelete(index)} aria-label={`刪除 ${meal.food}`}>刪除</button>
+      </div>)}
+    </div>}
+  </section>
+}
+
+function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood, onClose, onAdd }) {
   const [mode, setMode] = useState('quick')
   const [mealType, setMealType] = useState(getSuggestedMealType)
+  const [editingQuick, setEditingQuick] = useState(false)
+  const [quickForm, setQuickForm] = useState(null)
+  const [savingQuick, setSavingQuick] = useState(false)
   const [custom, setCustom] = useState({ name: '', kcal: '', protein: '', carbs: '', fat: '' })
   const [photoFiles, setPhotoFiles] = useState([])
   const [photoDescription, setPhotoDescription] = useState('')
@@ -233,6 +327,7 @@ function AddMealSheet({ onClose, onAdd }) {
   const [analysis, setAnalysis] = useState(null)
   const [analysisError, setAnalysisError] = useState('')
   const validCustom = custom.name && custom.kcal && custom.protein
+  const mealFrequentFoods = frequentFoods.filter(food => food.meal === mealType)
   const manualMeal = useMemo(() => ({
     ...custom,
     meal: mealType,
@@ -257,6 +352,15 @@ function AddMealSheet({ onClose, onAdd }) {
     } finally {
       setAnalyzing(false)
     }
+  }
+  const beginNewFrequentFood = () => setQuickForm({ meal: mealType, name: '', kcal: '', protein: '', carbs: '', fat: '' })
+  const beginEditFrequentFood = food => setQuickForm({ ...food })
+  const submitFrequentFood = async () => {
+    if (!quickForm?.name?.trim() || savingQuick) return
+    setSavingQuick(true)
+    const result = await onSaveFrequentFood({ ...quickForm, meal: mealType })
+    if (result?.ok) setQuickForm(null)
+    setSavingQuick(false)
   }
 
   return (
@@ -284,22 +388,36 @@ function AddMealSheet({ onClose, onAdd }) {
           ))}
         </div>
 
-        <MealTypePicker value={mealType} onChange={setMealType} />
+        <MealTypePicker value={mealType} onChange={type => { setMealType(type); setQuickForm(null) }} />
 
         {mode === 'quick' && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 16 }}>
-            {frequentFoods.map(food => (
-              <button key={food.name} onClick={() => onAdd({ ...food, meal: mealType, source: 'quick' })} className="card meal-quick-card" style={{ padding: 13, textAlign: 'left' }}>
-                <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{food.name}</div>
-                <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 4 }}>{mealType} · {food.kcal} kcal</div>
-                <div style={{ color: 'var(--orange-d)', fontSize: 12, fontWeight: 900, marginTop: 5 }}>P {food.protein}g</div>
-              </button>
-            ))}
+          <div className="meal-mode-panel" key={`quick-${mealType}`}>
+            <div className="frequent-food-toolbar">
+              <span>{mealType}常吃</span>
+              <button className={editingQuick ? 'active' : ''} onClick={() => { setEditingQuick(value => !value); setQuickForm(null) }}>{editingQuick ? '完成' : '編輯'}</button>
+            </div>
+            <div className="frequent-food-grid">
+              {mealFrequentFoods.map((food, index) => editingQuick ? (
+                <div key={food.id || `${food.meal}-${food.name}`} className="card meal-quick-card frequent-edit-card is-wiggling" style={{ '--wiggle-delay': `${index * -24}ms` }}>
+                  <button className="frequent-remove" onClick={() => onDeleteFrequentFood(food)} aria-label={`刪除 ${food.name}`}>−</button>
+                  <button className="frequent-edit-content" onClick={() => beginEditFrequentFood(food)}>
+                    <strong>{food.name}</strong><small>{food.kcal} kcal · P {food.protein}g</small>
+                  </button>
+                </div>
+              ) : (
+                <button key={food.id || `${food.meal}-${food.name}`} onClick={() => onAdd({ ...food, meal: mealType, source: 'quick' })} className="card meal-quick-card">
+                  <div>{food.name}</div><small>{food.kcal} kcal</small><strong>P {food.protein}g</strong>
+                </button>
+              ))}
+            </div>
+            {!mealFrequentFoods.length && <div className="frequent-food-empty">{mealType}還沒有常吃食物，可以從下方新增。</div>}
+            {editingQuick && !quickForm && <button className="frequent-add" onClick={beginNewFrequentFood}>＋ 新增{mealType}常吃</button>}
+            {quickForm && <FrequentFoodForm value={quickForm} onChange={setQuickForm} onCancel={() => setQuickForm(null)} onSave={submitFrequentFood} saving={savingQuick} />}
           </div>
         )}
 
         {mode === 'manual' && (
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="meal-mode-panel" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
             <MealField label="食物名稱">
               <input className="inp" placeholder="例如 雞胸飯" value={custom.name} onChange={e => setCustom({ ...custom, name: e.target.value })} />
             </MealField>
@@ -322,7 +440,7 @@ function AddMealSheet({ onClose, onAdd }) {
         )}
 
         {mode === 'photo' && (
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="meal-mode-panel" style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {photoPreviews.length ? <>
               <div className="photo-preview-grid">
                 {photoPreviews.map((url, index) => <div className="photo-preview-item" key={`${photoFiles[index]?.name}-${index}`}>
@@ -401,6 +519,21 @@ function MealTypePicker({ value, onChange }) {
       {mealTypes.map(type => <button key={type} className={value === type ? 'active' : ''} onClick={() => onChange(type)}>{type}</button>)}
     </div>
     <div className="meal-type-hint">已依現在時間預選；你可以隨時修改，手動選擇會優先於 AI 判斷。</div>
+  </div>
+}
+
+function FrequentFoodForm({ value, onChange, onCancel, onSave, saving }) {
+  const field = (key, nextValue) => onChange({ ...value, [key]: nextValue })
+  return <div className="frequent-food-form">
+    <strong>{value.id ? '修改常吃食物' : `新增${value.meal}常吃`}</strong>
+    <MealField label="食物名稱"><input className="inp" value={value.name} onChange={event => field('name', event.target.value)} placeholder="例如：太陽餅" /></MealField>
+    <div className="frequent-food-form-grid">
+      <MealField label="熱量" suffix="kcal"><input className="inp" type="number" inputMode="decimal" value={value.kcal} onChange={event => field('kcal', event.target.value)} /></MealField>
+      <MealField label="蛋白質" suffix="g"><input className="inp" type="number" inputMode="decimal" value={value.protein} onChange={event => field('protein', event.target.value)} /></MealField>
+      <MealField label="碳水" suffix="g"><input className="inp" type="number" inputMode="decimal" value={value.carbs} onChange={event => field('carbs', event.target.value)} /></MealField>
+      <MealField label="脂肪" suffix="g"><input className="inp" type="number" inputMode="decimal" value={value.fat} onChange={event => field('fat', event.target.value)} /></MealField>
+    </div>
+    <div className="frequent-food-form-actions"><button onClick={onCancel}>取消</button><button disabled={saving || !value.name?.trim()} onClick={onSave}>{saving ? '儲存中…' : '儲存'}</button></div>
   </div>
 }
 
