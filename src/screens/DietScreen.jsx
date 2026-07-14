@@ -224,35 +224,33 @@ function groupFoodLogs(logs) {
 
 function AddMealSheet({ onClose, onAdd }) {
   const [mode, setMode] = useState('quick')
-  const [custom, setCustom] = useState({ meal: '午餐', name: '', kcal: '', protein: '', carbs: '', fat: '' })
-  const [photoFile, setPhotoFile] = useState(null)
+  const [mealType, setMealType] = useState(getSuggestedMealType)
+  const [custom, setCustom] = useState({ name: '', kcal: '', protein: '', carbs: '', fat: '' })
+  const [photoFiles, setPhotoFiles] = useState([])
   const [photoDescription, setPhotoDescription] = useState('')
-  const [photoPreview, setPhotoPreview] = useState('')
+  const [photoPreviews, setPhotoPreviews] = useState([])
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState(null)
   const [analysisError, setAnalysisError] = useState('')
   const validCustom = custom.name && custom.kcal && custom.protein
   const manualMeal = useMemo(() => ({
     ...custom,
+    meal: mealType,
     kcal: Number(custom.kcal) || 0,
     protein: Number(custom.protein) || 0,
     carbs: Number(custom.carbs) || 0,
     fat: Number(custom.fat) || 0,
-  }), [custom])
+  }), [custom, mealType])
   useEffect(() => {
-    if (!photoFile) {
-      setPhotoPreview('')
-      return undefined
-    }
-    const url = URL.createObjectURL(photoFile)
-    setPhotoPreview(url)
-    return () => URL.revokeObjectURL(url)
-  }, [photoFile])
+    const urls = photoFiles.map(file => URL.createObjectURL(file))
+    setPhotoPreviews(urls)
+    return () => urls.forEach(URL.revokeObjectURL)
+  }, [photoFiles])
   const analyzePhoto = async () => {
     setAnalyzing(true)
     setAnalysisError('')
     try {
-      const result = await analyzeFoodWithGemini({ file: photoFile, description: photoDescription })
+      const result = await analyzeFoodWithGemini({ files: photoFiles, description: photoDescription })
       setAnalysis(result)
     } catch (error) {
       setAnalysisError(error.message || 'AI 分析失敗')
@@ -286,12 +284,14 @@ function AddMealSheet({ onClose, onAdd }) {
           ))}
         </div>
 
+        <MealTypePicker value={mealType} onChange={setMealType} />
+
         {mode === 'quick' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginTop: 16 }}>
             {frequentFoods.map(food => (
-              <button key={food.name} onClick={() => onAdd({ ...food, source: 'quick' })} className="card meal-quick-card" style={{ padding: 13, textAlign: 'left' }}>
+              <button key={food.name} onClick={() => onAdd({ ...food, meal: mealType, source: 'quick' })} className="card meal-quick-card" style={{ padding: 13, textAlign: 'left' }}>
                 <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{food.name}</div>
-                <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 4 }}>{food.meal} · {food.kcal} kcal</div>
+                <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 4 }}>{mealType} · {food.kcal} kcal</div>
                 <div style={{ color: 'var(--orange-d)', fontSize: 12, fontWeight: 900, marginTop: 5 }}>P {food.protein}g</div>
               </button>
             ))}
@@ -300,9 +300,6 @@ function AddMealSheet({ onClose, onAdd }) {
 
         {mode === 'manual' && (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <MealField label="餐別">
-              <input className="inp" placeholder="早餐 / 午餐 / 晚餐 / 點心" value={custom.meal} onChange={e => setCustom({ ...custom, meal: e.target.value })} />
-            </MealField>
             <MealField label="食物名稱">
               <input className="inp" placeholder="例如 雞胸飯" value={custom.name} onChange={e => setCustom({ ...custom, name: e.target.value })} />
             </MealField>
@@ -326,37 +323,27 @@ function AddMealSheet({ onClose, onAdd }) {
 
         {mode === 'photo' && (
           <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <div className="card photo-picker" style={{
-              textAlign: 'center',
-              color: 'var(--ink-3)',
-              padding: photoPreview ? 0 : 24,
-              minHeight: 168,
-              overflow: 'hidden',
-              display: 'grid',
-              placeItems: 'center',
-              background: photoPreview ? `center / cover no-repeat url(${photoPreview})` : '#2C2C2E',
-            }}>
-              {photoPreview ? (
-                <div style={{ alignSelf: 'end', width: '100%', padding: '44px 16px 14px', color: '#fff', background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.58))' }}>
-                  <div style={{ fontWeight: 900 }}>{photoFile?.name}</div>
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontWeight: 900, color: 'var(--ink-1)', fontSize: 18 }}>加入照片</div>
-                  <div style={{ fontSize: 13, marginTop: 6 }}>AI 會依照片辨識食物與估算營養</div>
-                </div>
-              )}
-            </div>
+            {photoPreviews.length ? <>
+              <div className="photo-preview-grid">
+                {photoPreviews.map((url, index) => <div className="photo-preview-item" key={`${photoFiles[index]?.name}-${index}`}>
+                  <img src={url} alt={`餐點照片 ${index + 1}`} />
+                  <button onClick={() => { setPhotoFiles(files => files.filter((_, fileIndex) => fileIndex !== index)); setAnalysis(null) }} aria-label={`移除第 ${index + 1} 張照片`}>×</button>
+                </div>)}
+              </div>
+              <div className="photo-count">已加入 {photoFiles.length} / 4 張，會合併分析為同一餐</div>
+            </> : <div className="card photo-picker" style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, minHeight: 148, display: 'grid', placeItems: 'center', background: '#2C2C2E' }}>
+              <div><div style={{ fontWeight: 900, color: 'var(--ink-1)', fontSize: 18 }}>加入餐點照片</div><div style={{ fontSize: 13, marginTop: 6 }}>最多 4 張，AI 會視為同一餐估算</div></div>
+            </div>}
             <div className="photo-source-grid">
               <label>
-                <span>從相片選擇</span>
-                <small>使用相簿裡的照片</small>
-                <input type="file" accept="image/*" onChange={e => selectPhoto(e, setPhotoFile, setAnalysis, setAnalysisError)} />
+                <span>{photoFiles.length ? '繼續加照片' : '從相片選擇'}</span>
+                <small>可一次選取多張</small>
+                <input type="file" accept="image/*" multiple disabled={photoFiles.length >= 4} onChange={e => selectPhotos(e, setPhotoFiles, setAnalysis, setAnalysisError)} />
               </label>
               <label>
                 <span>現在拍照</span>
-                <small>直接開啟相機</small>
-                <input type="file" accept="image/*" capture="environment" onChange={e => selectPhoto(e, setPhotoFile, setAnalysis, setAnalysisError)} />
+                <small>每次拍一張再追加</small>
+                <input type="file" accept="image/*" capture="environment" disabled={photoFiles.length >= 4} onChange={e => selectPhotos(e, setPhotoFiles, setAnalysis, setAnalysisError)} />
               </label>
             </div>
             <textarea
@@ -366,7 +353,7 @@ function AddMealSheet({ onClose, onAdd }) {
               onChange={e => setPhotoDescription(e.target.value)}
               style={{ minHeight: 86, resize: 'none', lineHeight: 1.5 }}
             />
-            <button className="btn-primary" disabled={analyzing || (!photoFile && !photoDescription.trim())} onClick={analyzePhoto}>
+            <button className="btn-primary" disabled={analyzing || (!photoFiles.length && !photoDescription.trim())} onClick={analyzePhoto}>
               {analyzing ? 'AI 分析中...' : '用AI分析餐點'}
             </button>
             {analysisError && (
@@ -374,12 +361,12 @@ function AddMealSheet({ onClose, onAdd }) {
             )}
             {analysis && (
               <div className="card" style={{ padding: 15 }}>
-                <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{analysis.meal} · {analysis.name}</div>
+                <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{mealType} · {analysis.name}</div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 6 }}>
                   {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
                 </div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
-                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, source: 'ai' })}>加入這一天</button>
+                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, meal: mealType, source: 'ai' })}>加入這一天</button>
               </div>
             )}
           </div>
@@ -389,11 +376,32 @@ function AddMealSheet({ onClose, onAdd }) {
   )
 }
 
-function selectPhoto(event, setPhotoFile, setAnalysis, setAnalysisError) {
-  setPhotoFile(event.target.files?.[0] || null)
+function selectPhotos(event, setPhotoFiles, setAnalysis, setAnalysisError) {
+  const selected = Array.from(event.target.files || []).filter(file => file.type.startsWith('image/'))
+  setPhotoFiles(current => [...current, ...selected].slice(0, 4))
   setAnalysis(null)
   setAnalysisError('')
   event.target.value = ''
+}
+
+const mealTypes = ['早餐', '午餐', '晚餐', '點心']
+
+function getSuggestedMealType() {
+  const hour = new Date().getHours()
+  if (hour >= 5 && hour < 12) return '早餐'
+  if (hour >= 12 && hour < 14) return '午餐'
+  if (hour >= 14 && hour < 18) return '點心'
+  if (hour >= 18) return '晚餐'
+  return '點心'
+}
+
+function MealTypePicker({ value, onChange }) {
+  return <div>
+    <div className="meal-type-picker" role="group" aria-label="餐別">
+      {mealTypes.map(type => <button key={type} className={value === type ? 'active' : ''} onClick={() => onChange(type)}>{type}</button>)}
+    </div>
+    <div className="meal-type-hint">已依現在時間預選；你可以隨時修改，手動選擇會優先於 AI 判斷。</div>
+  </div>
 }
 
 function SwipeMealCard({ meal, onDelete }) {

@@ -1,20 +1,29 @@
 import { supabase } from './supabase'
 
-const fileToBase64 = (file) => new Promise((resolve, reject) => {
-  const reader = new FileReader()
-  reader.onload = () => resolve(String(reader.result).split(',')[1])
-  reader.onerror = reject
-  reader.readAsDataURL(file)
+const fileToImage = file => new Promise((resolve, reject) => {
+  const image = new Image()
+  const url = URL.createObjectURL(file)
+  image.onload = () => {
+    const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale))
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale))
+    canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
+    URL.revokeObjectURL(url)
+    resolve({ mimeType: 'image/jpeg', data: canvas.toDataURL('image/jpeg', 0.82).split(',')[1] })
+  }
+  image.onerror = () => {
+    URL.revokeObjectURL(url)
+    reject(new Error(`無法讀取照片：${file.name}`))
+  }
+  image.src = url
 })
 
-export async function analyzeFoodWithGemini({ file, description }) {
-  if (!file && !description.trim()) throw new Error('請提供照片或文字描述')
-  const image = file ? {
-    mimeType: file.type || 'image/jpeg',
-    data: await fileToBase64(file),
-  } : null
+export async function analyzeFoodWithGemini({ files = [], description }) {
+  if (!files.length && !String(description || '').trim()) throw new Error('請提供照片或文字描述')
+  const images = await Promise.all(files.slice(0, 4).map(fileToImage))
   const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'food-analysis', description, image },
+    body: { task: 'food-analysis', description, images },
   })
   if (error) throw new Error(error.message || 'Gemini 分析失敗')
   const parsed = data?.meal

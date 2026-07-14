@@ -329,7 +329,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
         <div className="library-list">
           {library.map(item => {
             const picked = selected.some(movement => movement.name === item.name)
-            if (editingLibrary) return <div className="library-row library-edit-row" key={item.id || item.name}>
+            if (editingLibrary) return <div className="library-row library-edit-row is-wiggling" style={{ '--wiggle-delay': `${(Math.abs(item.name.length * 37) % 9) * -18}ms` }} key={item.id || item.name}>
               <span><strong>{item.name}</strong><small>{item.target} · {item.equipment}</small></span>
               <button className="delete-library-item" onClick={() => removeLibraryItem(item)} aria-label={`刪除 ${item.name}`}>刪除</button>
             </div>

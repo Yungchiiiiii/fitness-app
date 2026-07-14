@@ -10,6 +10,7 @@ type FoodAnalysisRequest = {
   task: 'food-analysis'
   description?: string
   image?: { mimeType: string; data: string } | null
+  images?: Array<{ mimeType: string; data: string }>
 }
 
 type CoachChatRequest = {
@@ -37,10 +38,11 @@ Deno.serve(async (req) => {
 
     if (body.task === 'food-analysis') {
       const meal = await analyzeFood(body)
+      const images = getFoodImages(body)
       await logAiEvent(client, user.id, 'food-analysis', {
         description: body.description?.slice(0, 1000) || '',
-        hasImage: Boolean(body.image?.data),
-        mimeType: body.image?.mimeType || null,
+        imageCount: images.length,
+        mimeTypes: images.map(image => image.mimeType),
       }, meal)
       return json({ meal })
     }
@@ -91,7 +93,7 @@ async function analyzeFood(body: FoodAnalysisRequest) {
   }
   if (!geminiKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
   const parts: Array<Record<string, unknown>> = [{
-    text: `你是營養分析助手。根據照片與使用者描述估算餐點營養。
+    text: `你是營養分析助手。根據照片與使用者描述估算餐點營養。所有照片都屬於同一餐，可能是分批上菜；請合併估算整餐，並避免重複計算看起來相同的食物。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
 {"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
@@ -99,11 +101,11 @@ async function analyzeFood(body: FoodAnalysisRequest) {
 使用者描述：${body.description || '無'}`,
   }]
 
-  if (body.image?.data) {
+  for (const image of getFoodImages(body)) {
     parts.push({
       inline_data: {
-        mime_type: body.image.mimeType || 'image/jpeg',
-        data: body.image.data,
+        mime_type: image.mimeType || 'image/jpeg',
+        data: image.data,
       },
     })
   }
@@ -123,11 +125,15 @@ async function analyzeFood(body: FoodAnalysisRequest) {
 }
 
 async function coachReply(body: CoachChatRequest) {
+  const noteInstruction = `必須先檢查 app 資料中的 trainingNotes，以及 recentTraining 每個動作的 note。
+若備註出現疼痛、不舒服、不適、緊、卡、麻、拉傷、扭傷、無力或其他異常，即使使用者這次沒有主動提到，也要在回答中指出相關日期、動作與備註內容，並把它納入訓練安排；不可忽略或建議硬撐。
+備註只代表使用者當時的主觀紀錄，不可自行診斷疾病。較舊的備註要說明日期，不可假裝是今天發生。`
   if (groqKey) {
     return callGroq([
       {
         role: 'system',
         content: `你是繁體中文健身、營養與恢復教練。請回答得具體、可執行、保守安全。
+${noteInstruction}
 不能診斷疾病；如果使用者描述受傷、劇痛、腫脹、無法負重、麻木或症狀惡化，要建議就醫或找物理治療師。
 回答 3 到 6 點，避免空泛。每一點必須獨立換行，使用「1.」「2.」「3.」編號；不同主題之間空一行，不要把多個編號擠在同一行。請參考 app 內資料：${JSON.stringify(body.context || {})}`,
       },
@@ -138,6 +144,7 @@ async function coachReply(body: CoachChatRequest) {
   return (await callGemini([{
     text: `你是繁體中文健身、營養與恢復教練。
 請回答得具體、可執行、保守安全，並參考 app 內資料。
+${noteInstruction}
 不能診斷疾病；如果使用者描述受傷、劇痛、腫脹、無法負重、麻木或症狀惡化，要建議就醫或找物理治療師。
 回答 3 到 6 點，避免空泛。每一點必須獨立換行，使用「1.」「2.」「3.」編號；不同主題之間空一行，不要把多個編號擠在同一行。
 
@@ -175,10 +182,11 @@ target 請用簡短繁體中文列出主要肌群，例如「股四頭肌、臀�
 
 async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
   const description = body.description?.trim()
+  const images = getFoodImages(body)
   const content: Array<Record<string, unknown>> = [
     {
       type: 'text',
-      text: `請分析這份餐點。使用者補充描述：${description || '無'}。
+      text: `請把所有照片視為同一餐的不同食物或不同上菜時間，合併分析整餐，避免重複計算相同食物。使用者補充描述：${description || '無'}。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
 {"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
@@ -186,11 +194,11 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
     },
   ]
 
-  if (body.image?.data) {
+  for (const image of images) {
     content.push({
       type: 'image_url',
       image_url: {
-        url: `data:${body.image.mimeType || 'image/jpeg'};base64,${body.image.data}`,
+        url: `data:${image.mimeType || 'image/jpeg'};base64,${image.data}`,
       },
     })
   }
@@ -201,7 +209,7 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
       content: '你是營養分析助手。你可以根據餐點照片與文字描述估算營養。',
     },
     { role: 'user', content },
-  ], body.image?.data ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
+  ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
   const parsed = parseJson(text)
   const isFood = parsed.isFood !== false
   return {
@@ -214,6 +222,11 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
     fat: isFood ? Number(parsed.fat) || 0 : 0,
     note: parsed.note || (isFood ? '由 AI 依文字描述估算。' : '沒有辨識到可記錄的餐點。'),
   }
+}
+
+function getFoodImages(body: FoodAnalysisRequest) {
+  const supplied = Array.isArray(body.images) ? body.images : body.image ? [body.image] : []
+  return supplied.filter(image => image?.data).slice(0, 4)
 }
 
 async function callGemini(parts: Array<Record<string, unknown>>) {

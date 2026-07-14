@@ -9,11 +9,11 @@ export default function CoachScreen({ session }) {
   const prototypeOnly = !!session?.prototype
   const [text, setText] = useState('')
   const [messages, setMessages] = useState([
-    { role: 'coach', text: '我看了你的訓練、飲食和恢復狀態。今天可以保留訓練節奏，但肩部推舉先降壓力。' },
+    { role: 'coach', text: '你可以直接問我訓練、飲食或恢復問題。我會一起參考近期訓練紀錄與你寫下的運動備註。' },
   ])
   const [composerKey, setComposerKey] = useState(0)
   const [thinking, setThinking] = useState(false)
-  const [contextData, setContextData] = useState(() => buildCoachContext())
+  const [contextData, setContextData] = useState(() => prototypeOnly ? buildCoachContext() : null)
   const messageEndRef = useRef(null)
 
   useEffect(() => {
@@ -45,7 +45,7 @@ export default function CoachScreen({ session }) {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, thinking])
 
-  const context = contextData || buildCoachContext()
+  const context = contextData || emptyCoachContext()
 
   const ask = async (prompt = text) => {
     const clean = prompt.trim()
@@ -58,7 +58,7 @@ export default function CoachScreen({ session }) {
       const reply = await askCoachWithAI({ prompt: clean, context })
       setMessages(prev => [...prev, { role: 'coach', text: reply }])
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'coach', text: buildReply(clean, error.message) }])
+      setMessages(prev => [...prev, { role: 'coach', text: buildReply(clean, error.message, context) }])
     } finally {
       setThinking(false)
     }
@@ -153,6 +153,16 @@ function buildCoachContext() {
 function buildBackendCoachContext({ sessions, nutrition, meals, weights, recovery, profile }) {
   const value = (key) => Number(nutrition?.[key]) || 0
   const target = (key, fallback) => Number(profile?.[key]) || fallback
+  const recentTraining = sessions.slice(0, 12).map(s => ({
+    date: s.date,
+    name: s.name,
+    exercises: (s.session_exercises || []).map(ex => ({
+      name: ex.name,
+      category: ex.category,
+      note: ex.note,
+      sets: ex.exercise_sets?.length || 0,
+    })),
+  }))
   return {
     macroSnapshot: {
       calories: { value: value('calories'), target: target('calories_target', 2200) },
@@ -162,15 +172,10 @@ function buildBackendCoachContext({ sessions, nutrition, meals, weights, recover
     },
     painLogs: recovery,
     weightTrend: { start: weights[0] || null, latest: weights.at(-1) || null },
-    recentTraining: sessions.slice(0, 6).map(s => ({
-      date: s.date,
-      name: s.name,
-      exercises: (s.session_exercises || []).map(ex => ({
-        name: ex.name,
-        note: ex.note,
-        sets: ex.exercise_sets?.length || 0,
-      })),
-    })),
+    recentTraining,
+    trainingNotes: recentTraining.flatMap(training => training.exercises
+      .filter(exercise => exercise.note?.trim())
+      .map(exercise => ({ date: training.date, exercise: exercise.name, category: exercise.category, note: exercise.note.trim() }))),
     todayMeals: meals.map(meal => ({
       meal: meal.meal,
       name: meal.name,
@@ -182,7 +187,15 @@ function buildBackendCoachContext({ sessions, nutrition, meals, weights, recover
   }
 }
 
-function buildReply(prompt, reason = '') {
+function emptyCoachContext() {
+  return { macroSnapshot: null, painLogs: [], weightTrend: {}, recentTraining: [], trainingNotes: [], todayMeals: [] }
+}
+
+function buildReply(prompt, reason = '', context = emptyCoachContext()) {
+  const discomfort = (context.trainingNotes || []).find(item => /(痛|不舒服|不適|緊|卡|麻|拉傷|扭傷|無力)/.test(item.note))
+  if (discomfort) {
+    return `我有看到你在 ${discomfort.date} 的「${discomfort.exercise}」備註寫了「${discomfort.note}」。\n\n1. 今天先避開會重現不適的角度與動作，不要硬撐。\n2. 同部位訓練先降低重量或組數，保持動作可控制且沒有惡化。\n3. 如果有劇痛、腫脹、麻木、明顯無力或症狀持續加重，請停止訓練並找醫師或物理治療師評估。`
+  }
   if (prompt.includes('腳') || prompt.includes('翻船') || prompt.includes('扭')) {
     return `目前 AI API ${reason ? `暫時不可用（${reason}）` : '暫時不可用'}，先給你保守建議：\n\n1. 前 24–48 小時先減少跑跳與下肢負重。\n2. 冰敷 10–15 分鐘，一天 2–4 次，並把腳抬高休息。\n3. 若明顯腫脹、瘀青、無法承重或疼痛加劇，請看醫師或物理治療師。\n4. 疼痛下降後，再循序做腳踝畫圈、彈力帶外翻／內翻與單腳平衡。`
   }

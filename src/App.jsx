@@ -20,6 +20,7 @@ const getAuthRedirectUrl = () => import.meta.env.VITE_SITE_URL
 
 export default function App() {
   const [tab, setTab] = useState('home')
+  const [tabDirection, setTabDirection] = useState('forward')
   const [session, setSession] = useState(null)
   const [bootReady, setBootReady] = useState(false)
   const [bootError, setBootError] = useState('')
@@ -67,15 +68,23 @@ export default function App() {
     coach:    <CoachScreen session={session} />,
   }
 
+  const changeTab = nextTab => {
+    if (nextTab === tab) return
+    const currentIndex = TABS.findIndex(item => item.id === tab)
+    const nextIndex = TABS.findIndex(item => item.id === nextTab)
+    setTabDirection(nextIndex > currentIndex ? 'forward' : 'backward')
+    setTab(nextTab)
+  }
+
   return (
     <div style={{ position: 'relative', height: '100%', background: 'var(--bg-app)' }}>
-      <div className="screen screen-fade" key={tab}>
+      <div className={`screen screen-transition ${tabDirection}`} key={tab}>
         {screens[tab]}
       </div>
 
       <nav className="tab-bar">
         {TABS.map(t => (
-          <button key={t.id} className={`tab-item ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
+          <button key={t.id} className={`tab-item ${tab === t.id ? 'active' : ''}`} onClick={() => changeTab(t.id)}>
             <t.icon />
             {t.label}
           </button>
