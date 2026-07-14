@@ -65,7 +65,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
 
   const library = useMemo(() => {
     const rows = filter === 'custom'
-      ? customExercises
+      ? []
       : [
           ...customExercises.filter(item => item.category === filter),
           ...(WORLD_GYM_LIBRARY[filter] || []).map(item => ({ ...item, category: filter })),
@@ -325,7 +325,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
           {editingCustomId && <button className="cancel-custom-edit" onClick={() => { setEditingCustomId(null); setCustomName(''); setCustomCategory('auto'); setCustomTarget('') }}>取消編輯</button>}
         </div>}
 
-        <div className="library-list">
+        {filter !== 'custom' && <div className="library-list">
           {library.map(item => {
             const picked = selected.some(movement => movement.name === item.name)
             if (editingLibrary) return <div className="library-row library-edit-row is-wiggling" style={{ '--wiggle-delay': `${(Math.abs(item.name.length * 37) % 9) * -18}ms` }} key={item.id || item.name}>
@@ -339,7 +339,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
               </button>
           })}
           {!library.length && <div className="empty-custom-library">{editingLibrary ? '這個分類目前沒有可編輯的運動。' : '還沒有自訂動作，先在上方建立一個。'}</div>}
-        </div>
+        </div>}
       </section>
     </main>
   </div>
