@@ -4,12 +4,19 @@ import { supabase } from './supabase'
 export const getProfile = (userId) =>
   supabase
     .from('profiles')
-    .select('id, display_name, height_cm, weight_kg, targets, training_days, calories_target, protein_target, carbs_target, fat_target, name, weight, height, goal, calorie_target, carb_target, created_at, updated_at')
+    .select('id, display_name, height_cm, weight_kg, targets, training_days, calories_target, protein_target, carbs_target, fat_target, profile_setup_version, name, weight, height, goal, calorie_target, carb_target, created_at, updated_at')
     .eq('id', userId)
     .single()
 
 export const updateProfile = ({ id, ...updates }) =>
   supabase.from('profiles').update(updates).eq('id', id).select('id').single()
+
+export const upsertProfile = (profile) =>
+  supabase
+    .from('profiles')
+    .upsert(profile, { onConflict: 'id' })
+    .select('id, display_name, height_cm, weight_kg, targets, training_days, calories_target, protein_target, carbs_target, fat_target, profile_setup_version, created_at, updated_at')
+    .single()
 
 // ── Workout Sessions ──────────────────────────────────
 export const getSessions = (userId) =>

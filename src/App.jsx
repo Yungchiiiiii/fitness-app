@@ -4,6 +4,9 @@ import HomeScreen from './screens/HomeScreen'
 import TrainingScreen from './screens/TrainingScreen'
 import DietScreen from './screens/DietScreen'
 import CoachScreen from './screens/CoachScreen'
+import ProfileSetupFlow from './components/ProfileSetupFlow'
+import { getProfile } from './lib/db'
+import { isProfileComplete } from './lib/profile'
 
 const TABS = [
   { id: 'home',     label: '摘要',  icon: HomeIcon },
@@ -24,6 +27,8 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [bootReady, setBootReady] = useState(false)
   const [bootError, setBootError] = useState('')
+  const [profileState, setProfileState] = useState({ status: 'idle', profile: null, error: '' })
+  const [profileRetry, setProfileRetry] = useState(0)
 
   const restoreSession = async () => {
     setBootError('')
@@ -57,8 +62,38 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
+  useEffect(() => {
+    if (!session?.user?.id || session.user.is_anonymous) {
+      setProfileState({ status: 'idle', profile: null, error: '' })
+      return
+    }
+    let cancelled = false
+    setProfileState({ status: 'loading', profile: null, error: '' })
+    getProfile(session.user.id).then(({ data, error }) => {
+      if (cancelled) return
+      if (error && error.code !== 'PGRST116') {
+        setProfileState({ status: 'error', profile: null, error: error.message })
+        return
+      }
+      setProfileState({ status: isProfileComplete(data) ? 'ready' : 'required', profile: data || null, error: '' })
+    })
+    return () => { cancelled = true }
+  }, [session?.user?.id, session?.user?.is_anonymous, profileRetry])
+
   if (!session || session.user?.is_anonymous) {
     return <CloudBoot ready={bootReady} error={bootError} onRetry={restoreSession} anonymousSession={session?.user?.is_anonymous ? session : null} />
+  }
+
+  if (profileState.status === 'idle' || profileState.status === 'loading') {
+    return <ProfileLoading />
+  }
+
+  if (profileState.status === 'error') {
+    return <ProfileLoadError message={profileState.error} onRetry={() => setProfileRetry(current => current + 1)} />
+  }
+
+  if (profileState.status === 'required') {
+    return <ProfileSetupFlow session={session} initialProfile={profileState.profile} onComplete={profile => setProfileState({ status: 'ready', profile, error: '' })} />
   }
 
   const screens = {
@@ -92,6 +127,14 @@ export default function App() {
       </nav>
     </div>
   )
+}
+
+function ProfileLoading() {
+  return <div className="profile-gate-message"><span className="setup-loader" /><strong>正在準備你的個人空間</strong><small>確認這個帳號的目標與設定…</small></div>
+}
+
+function ProfileLoadError({ message, onRetry }) {
+  return <div className="profile-gate-message"><strong>暫時無法讀取個人資料</strong><small>{message}</small><button className="neon-button compact" onClick={onRetry}>重新載入</button></div>
 }
 
 function CloudBoot({ ready, error, onRetry, anonymousSession }) {

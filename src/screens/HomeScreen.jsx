@@ -24,7 +24,6 @@ export default function HomeScreen({ session }) {
   const prototypeOnly = Boolean(session.prototype)
   const today = useMemo(() => new Date(), [])
   const todayString = isoDate(today)
-  const name = session?.user?.user_metadata?.name || '你'
   const [sessions, setSessions] = useState([])
   const [nutrition, setNutrition] = useState(null)
   const [profile, setProfile] = useState(null)
@@ -56,6 +55,7 @@ export default function HomeScreen({ session }) {
   useEffect(() => {
     const syncGoals = event => setProfile(previous => ({
       ...previous,
+      display_name: event.detail.name || previous?.display_name,
       training_days: event.detail.trainingDays,
       calories_target: event.detail.calories,
       protein_target: event.detail.protein,
@@ -118,7 +118,7 @@ export default function HomeScreen({ session }) {
           <p>{today.toLocaleDateString('zh-TW', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })}</p>
         </div>
         <button className="profile-orb" onClick={() => setShowProfile(true)} aria-label="個人設定">
-          <UserIcon />
+          {profile?.display_name?.trim()?.[0] || <UserIcon />}
         </button>
       </header>
 

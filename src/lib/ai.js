@@ -25,7 +25,7 @@ export async function analyzeFoodWithGemini({ files = [], description }) {
   const { data, error } = await supabase.functions.invoke('fitness-ai', {
     body: { task: 'food-analysis', description, images },
   })
-  if (error) throw new Error(error.message || 'Gemini 分析失敗')
+  if (error) throw new Error(await functionErrorMessage(error, 'AI 分析失敗'))
   const parsed = data?.meal
   if (!parsed) throw new Error('AI 沒有回傳餐點分析')
   if (parsed.isFood === false) throw new Error(parsed.note || 'AI 沒有在照片中辨識到餐點，請換一張食物照片或補充描述。')
@@ -39,6 +39,8 @@ export async function analyzeFoodWithGemini({ files = [], description }) {
     note: parsed.note || '由 AI 依照片與描述估算。',
     lookupUsed: parsed.lookupUsed === true,
     sources: Array.isArray(parsed.sources) ? parsed.sources.slice(0, 3) : [],
+    estimated: parsed.estimated === true,
+    needsNutritionLabel: parsed.needsNutritionLabel === true,
   }
 }
 
@@ -46,7 +48,7 @@ export async function askCoachWithAI({ prompt, context }) {
   const { data, error } = await supabase.functions.invoke('fitness-ai', {
     body: { task: 'coach-chat', prompt, context },
   })
-  if (error) throw new Error(error.message || 'AI 教練回覆失敗')
+  if (error) throw new Error(await functionErrorMessage(error, 'AI 教練回覆失敗'))
   return data?.reply?.trim() || '我暫時沒有取得有效回覆，請再問一次。'
 }
 
@@ -56,7 +58,7 @@ export async function classifyExerciseWithAI(name) {
   const { data, error } = await supabase.functions.invoke('fitness-ai', {
     body: { task: 'exercise-classification', name: cleanName },
   })
-  if (error) throw new Error(error.message || 'AI 分類失敗')
+  if (error) throw new Error(await functionErrorMessage(error, 'AI 分類失敗'))
   const classification = data?.classification
   if (!classification?.category || !classification?.target) throw new Error('AI 沒有回傳有效分類')
   const durationSport = /(羽球|網球|桌球|壁球|籃球|排球|足球|棒球|壘球|游泳|跑步|慢跑|健走|單車|自行車|跳繩|有氧舞蹈|拳擊|登山|爬山)/.test(cleanName)

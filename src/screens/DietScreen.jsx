@@ -484,11 +484,13 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
                   {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
                 </div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
+                {analysis.estimated && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>未讀到成分表，本次為一般份量估算；仍可直接加入或改用手動調整。</div>}
+                {analysis.needsNutritionLabel && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>請補拍包裝背面的營養標示，再按一次分析；本次不會加入 0 熱量紀錄。</div>}
                 {analysis.lookupUsed && <div style={{ color: '#16A34A', fontSize: 12, marginTop: 8, fontWeight: 800 }}>已用網路資料查證商品與份量</div>}
                 {!!analysis.sources?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                   {analysis.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" style={{ color: 'var(--neon)', fontSize: 12 }}>查看 {source.title}</a>)}
                 </div>}
-                <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, meal: mealType, source: 'ai' })}>加入這一天</button>
+                {!analysis.needsNutritionLabel && <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, meal: mealType, source: 'ai' })}>加入這一天</button>}
               </div>
             )}
           </div>
