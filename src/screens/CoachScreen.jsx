@@ -166,6 +166,10 @@ function buildBackendCoachContext({ sessions, nutrition, meals, foodHistory, wei
       sets: ex.exercise_sets?.length || 0,
     })),
   }))
+  const recentWeights = weights.slice(-8).map(item => ({ date: item.date, weight: Number(item.weight) }))
+  const lastWeightChange = recentWeights.length > 1
+    ? Number((recentWeights.at(-1).weight - recentWeights.at(-2).weight).toFixed(1))
+    : null
   return {
     macroSnapshot: {
       calories: { value: value('calories'), target: target('calories_target', 2200) },
@@ -174,7 +178,12 @@ function buildBackendCoachContext({ sessions, nutrition, meals, foodHistory, wei
       fat: { value: value('fat'), target: target('fat_target', 65) },
     },
     painLogs: recovery,
-    weightTrend: { start: weights[0] || null, latest: weights.at(-1) || null },
+    weightTrend: {
+      start: recentWeights[0] || null,
+      latest: recentWeights.at(-1) || null,
+      lastWeeklyChangeKg: lastWeightChange,
+      recentWeeklyLogs: recentWeights,
+    },
     recentTraining,
     trainingNotes: recentTraining.flatMap(training => training.exercises
       .filter(exercise => exercise.note?.trim())

@@ -4,6 +4,24 @@ import { supabase } from '../lib/supabase'
 import { calculateNutritionTargets, emptyProfileGoals, profileToGoals } from '../lib/profile'
 
 const clampTrainingDays = (value) => Math.max(1, Math.min(7, Number(value) || 1))
+const localDate = date => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+const getWeekStart = date => {
+  const monday = new Date(date)
+  const day = monday.getDay()
+  monday.setDate(monday.getDate() - (day === 0 ? 6 : day - 1))
+  monday.setHours(0, 0, 0, 0)
+  return monday
+}
+const canLogWeeklyWeight = (now, logs) => {
+  const isMondayAfterSix = now.getDay() === 1 && now.getHours() >= 6
+  const weekStart = localDate(getWeekStart(now))
+  return isMondayAfterSix && !logs.some(log => log.date === weekStart)
+}
 const goalStorageKey = userId => `fitness-goals:${userId}`
 const loadGoals = (userId) => {
   try {
@@ -28,6 +46,7 @@ export default function ProfileScreen({ session }) {
   const [goals, setGoals] = useState(() => loadGoals(session.user.id))
   const [showGoals, setShowGoals] = useState(false)
   const [error, setError] = useState('')
+  const [clock, setClock] = useState(() => new Date())
   const targetText = goals.targets?.join('、') || '尚未選擇目標'
 
   useEffect(() => {
@@ -46,7 +65,7 @@ export default function ProfileScreen({ session }) {
       }
       if (!weightResult.error && weightResult.data?.length) {
         setLogs(weightResult.data.map(log => ({
-          date: new Date(`${log.date}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }),
+          date: log.date,
           weight: Number(log.weight),
         })))
         setWeeklyWeight(String(weightResult.data.at(-1).weight))
@@ -56,18 +75,31 @@ export default function ProfileScreen({ session }) {
     return () => { cancelled = true }
   }, [session?.user?.id, session?.prototype])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   const trend = useMemo(() => Number(((logs.at(-1)?.weight || 0) - (logs[0]?.weight || 0)).toFixed(1)), [logs])
+  const showWeeklyWeightForm = canLogWeeklyWeight(clock, logs)
   const addWeight = async () => {
     const next = parseFloat(weeklyWeight)
-    if (!next) return
+    if (!showWeeklyWeightForm) return
+    if (!Number.isFinite(next) || next < 20 || next >= 500) {
+      setError('請輸入 20 到 499.9 kg 之間的體重。')
+      return
+    }
     const now = new Date()
-    const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const label = now.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
-    setLogs(prev => [...prev.slice(-6), { date: label, weight: next }])
+    const date = localDate(getWeekStart(now))
     if (!session?.prototype) {
       const { error: saveError } = await upsertWeightLog({ user_id: session.user.id, date, weight: next })
-      if (saveError) setError(`儲存體重失敗：${saveError.message}`)
+      if (saveError) {
+        setError(`儲存體重失敗：${saveError.message}`)
+        return
+      }
     }
+    setError('')
+    setLogs(prev => [...prev.filter(log => log.date !== date), { date, weight: next }].sort((a, b) => a.date.localeCompare(b.date)))
   }
 
   const handleSaveGoals = async (next, nextName) => {
@@ -139,14 +171,17 @@ export default function ProfileScreen({ session }) {
 
       <div className="section-title">每週體重</div>
       <div className="card">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10 }}>
-          <input className="inp" type="number" inputMode="decimal" value={weeklyWeight} onChange={e => setWeeklyWeight(e.target.value)} />
-          <button className="btn-primary" style={{ width: 'auto', padding: '0 18px' }} onClick={addWeight}>記錄本週</button>
-        </div>
+        {showWeeklyWeightForm && <div className="weekly-weight-prompt">
+          <div><strong>星期一體重紀錄</strong><span>填完後會加入趨勢圖，AI 教練也會一起參考。</span></div>
+          <div className="weekly-weight-controls">
+            <input className="inp" aria-label="本週體重" type="number" inputMode="decimal" min="20" max="499" step="0.1" value={weeklyWeight} onChange={e => setWeeklyWeight(e.target.value)} />
+            <button className="btn-primary" onClick={addWeight}>記錄本週</button>
+          </div>
+        </div>}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 }}>
           <div>
             <div className="display" style={{ fontSize: 32, fontWeight: 900, color: 'var(--ink-1)' }}>{logs.length ? `${logs.at(-1)?.weight}kg` : '尚無紀錄'}</div>
-            <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 2 }}>{logs.length > 1 ? `最近紀錄 ${trend > 0 ? '+' : ''}${trend}kg` : '輸入本週體重開始追蹤'}</div>
+            <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 2 }}>{logs.length > 1 ? `整段變化 ${trend > 0 ? '+' : ''}${trend}kg` : logs.length ? '下週一早上 6 點再記錄' : '每週一早上 6 點開放記錄'}</div>
           </div>
           <span className="pill" style={{ color: '#B45309', background: '#FEF3C7' }}>維持區間</span>
         </div>
@@ -300,21 +335,22 @@ function Field({ label, suffix, children }) {
 }
 
 function WeightChart({ logs }) {
-  const values = logs.map(l => l.weight)
+  const displayLogs = logs.slice(-7)
+  const values = displayLogs.map(l => l.weight)
   const min = Math.min(...values) - 0.4
   const max = Math.max(...values) + 0.4
-  const pointList = logs.map((log, i) => {
-    const x = 12 + i * (176 / Math.max(1, logs.length - 1))
+  const pointList = displayLogs.map((log, i) => {
+    const x = 12 + i * (176 / Math.max(1, displayLogs.length - 1))
     const y = 88 - ((log.weight - min) / (max - min)) * 56
-    return { x, y, weight: log.weight, date: log.date }
+    return { x, y, weight: log.weight, date: new Date(`${log.date}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }) }
   })
   const points = pointList.map(p => `${p.x},${p.y}`).join(' ')
 
   return (
-    <svg viewBox="0 0 200 118" style={{ width: '100%', marginTop: 12 }}>
+    <svg className="weight-chart animated-line-chart" viewBox="0 0 200 128">
       <path d="M12 92H188" stroke="#FED7AA" />
       <path d="M12 60H188" stroke="#FED7AA" />
-      <polyline points={points} fill="none" stroke="url(#weightGrad)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline className="chart-draw-line" pathLength="1" points={points} fill="none" stroke="url(#weightGrad)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       <defs>
         <linearGradient id="weightGrad" x1="0" x2="1">
           <stop offset="0%" stopColor="#FF7A1E" />
@@ -324,9 +360,10 @@ function WeightChart({ logs }) {
       {pointList.map((point, i) => {
         const labelY = Math.max(12, point.y - 10)
         return (
-          <g key={`${point.date}-${i}`}>
+          <g className="chart-point" style={{ '--point-delay': `${.45 + i * .08}s` }} key={`${point.date}-${i}`}>
             <text x={point.x} y={labelY} textAnchor="middle" fontSize="7.5" fill="#4E3424" fontWeight="900">{point.weight.toFixed(1)}</text>
             <circle cx={point.x} cy={point.y} r="4" fill="#fff" stroke="#FF7A1E" strokeWidth="3" />
+            <text x={point.x} y="122" textAnchor="middle" fontSize="7" fill="#8E8E93" fontWeight="800">{point.date}</text>
           </g>
         )
       })}

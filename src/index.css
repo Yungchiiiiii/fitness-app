@@ -317,6 +317,8 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
   border-radius: inherit;
   background: linear-gradient(90deg, #FF7A1E, #F43F5E);
 }
+.macro-progress-fill { width: var(--progress); transform-origin: left center; animation: progressGrow .85s cubic-bezier(.2,.82,.25,1) both; }
+@keyframes progressGrow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 .cta-card {
   width: 100%;
@@ -673,6 +675,8 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .profile-orb svg { width: 23px; height: 23px; }
 .activity-card { min-height: 228px; border: 1px solid rgba(255,255,255,.11); border-radius: 26px; background: linear-gradient(145deg,#18181a,#0d0d0e); display: grid; grid-template-columns: 1.1fr 1fr; align-items: center; gap: 12px; padding: 20px 16px; }
 .activity-rings { width: 100%; max-width: 190px; margin: auto; filter: drop-shadow(0 6px 12px rgba(0,0,0,.45)); }
+.activity-ring-progress { animation: ringDraw .95s cubic-bezier(.2,.82,.25,1) both; }
+@keyframes ringDraw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: var(--ring-offset); } }
 .activity-legends { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .ring-legend > span { color: var(--ink-3); font-size: 11px; font-weight: 800; display: flex; gap: 7px; align-items: center; }
 .ring-legend > span i { width: 8px; height: 8px; border-radius: 50%; }
@@ -786,9 +790,11 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
   animation-delay: var(--wiggle-delay, 0ms);
 }
 
-.custom-exercise-form { margin-top: 14px; padding: 16px; border: 1px solid rgba(166,255,50,.24); border-radius: 18px; background: #111113; display: grid; gap: 11px; }
+.custom-exercise-form { margin-top: 14px; padding: 18px; border: 1px solid rgba(166,255,50,.24); border-radius: 20px; background: #111113; display: grid; gap: 13px; }
 .custom-exercise-form > strong { font-size: 17px; }
 .custom-exercise-form input,.custom-exercise-form select { width: 100%; min-width: 0; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: #202023; color: #fff; padding: 13px; outline: 0; }
+.custom-exercise-form > input { min-height: 64px; padding: 16px; border-radius: 16px; font-size: 20px; line-height: 1.35; }
+.custom-exercise-form > input:focus { border-color: rgba(166,255,50,.6); box-shadow: 0 0 0 4px rgba(166,255,50,.1); }
 .exercise-photo-intro { display: grid; gap: 4px; margin-top: 3px; }
 .exercise-photo-intro strong { color: #f5f5f7; font-size: 14px; }
 .exercise-photo-intro span { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
@@ -865,6 +871,19 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .progress-card-head strong { margin-top: 5px; font-size: 34px; font-weight: 950; }
 .progress-card-head em { color: var(--neon); background: rgba(166,255,50,.13); border-radius: 99px; padding: 7px 10px; font-style: normal; font-weight: 900; white-space: nowrap; }
 .progress-chart { width: 100%; margin-top: 12px; overflow: visible; }
+.chart-draw-line { stroke-dasharray: 1; stroke-dashoffset: 1; animation: chartLineDraw .9s cubic-bezier(.2,.82,.25,1) .08s forwards; }
+.chart-point { opacity: 0; animation: chartPointIn .32s cubic-bezier(.2,.82,.25,1) var(--point-delay, .45s) forwards; }
+@keyframes chartLineDraw { to { stroke-dashoffset: 0; } }
+@keyframes chartPointIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+.weight-chart { width: 100%; margin-top: 12px; overflow: visible; }
+.weekly-weight-prompt { display: grid; gap: 12px; padding: 14px; border-radius: 16px; background: linear-gradient(135deg, rgba(255,122,30,.12), rgba(244,63,94,.08)); border: 1px solid rgba(255,122,30,.22); animation: fadeIn .35s cubic-bezier(.2,.82,.25,1); }
+.weekly-weight-prompt strong,.weekly-weight-prompt span { display: block; }
+.weekly-weight-prompt strong { color: var(--ink-1); font-size: 15px; }
+.weekly-weight-prompt span { color: var(--ink-3); margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.weekly-weight-controls { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; }
+.weekly-weight-controls .btn-primary { width: auto; padding: 0 18px; white-space: nowrap; }
+.daily-advice { color: var(--ink-2); font-size: 14px; line-height: 1.55; font-weight: 750; }
+.daily-advice.waiting { color: var(--ink-3); border-style: dashed; }
 .training-empty { color: #aaaab0; margin-top: 16px; line-height: 1.5; }
 .history-record-title { color: #aaaab0; font-size: 17px; margin: 22px 0 12px; }
 .training-record-list { display: grid; gap: 11px; }

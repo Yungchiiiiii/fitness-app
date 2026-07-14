@@ -28,7 +28,9 @@ export default function DietScreen({ session }) {
   const [frequentFoods, setFrequentFoods] = useState(() => defaultFrequentFoods.map((food, index) => ({ ...food, id: `prototype-default-${index}` })))
   const [loading, setLoading] = useState(!prototypeOnly)
   const [error, setError] = useState('')
+  const [clock, setClock] = useState(() => new Date())
   const day = calendar[selectedDay] || emptyDay
+  const showDailyAdvice = selectedDay !== todayDay || clock.getHours() >= 22
 
   const reload = async () => {
     if (prototypeOnly || !session?.user?.id) return
@@ -62,6 +64,10 @@ export default function DietScreen({ session }) {
   }
 
   useEffect(() => { reload(); reloadFrequentFoods() }, [session?.user?.id, prototypeOnly])
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const addMeal = async (meal) => {
     const normalized = normalizeMeal(meal)
@@ -195,8 +201,8 @@ export default function DietScreen({ session }) {
       </div>
 
       <div className="section-title">當日 AI 建議</div>
-      <div className="card" style={{ color: 'var(--ink-2)', fontSize: 14, lineHeight: 1.55, fontWeight: 750 }}>
-        {day.advice}
+      <div className={`card daily-advice ${showDailyAdvice ? 'ready' : 'waiting'}`}>
+        {showDailyAdvice ? day.advice : '今晚 10:00 會依照整天的飲食紀錄整理 AI 建議。'}
       </div>
 
       <div className="section-title">當日飲食</div>
@@ -251,10 +257,10 @@ function normalizeMeal(meal) {
     id: meal.id,
     name: meal.meal || '點心',
     food: meal.name || '未命名餐點',
-    protein: Number(meal.protein) || 0,
+    protein: roundMacro(meal.protein),
     kcal: Number(meal.kcal) || 0,
-    carbs: Number(meal.carbs) || 0,
-    fat: Number(meal.fat) || 0,
+    carbs: roundMacro(meal.carbs),
+    fat: roundMacro(meal.fat),
     note: meal.note || '',
   }
 }
@@ -282,9 +288,9 @@ function normalizeFrequentFood(food) {
     meal: mealTypes.includes(food.meal) ? food.meal : '點心',
     name: String(food.name || '').trim(),
     kcal: Number(food.kcal) || 0,
-    protein: Number(food.protein) || 0,
-    carbs: Number(food.carbs) || 0,
-    fat: Number(food.fat) || 0,
+    protein: roundMacro(food.protein),
+    carbs: roundMacro(food.carbs),
+    fat: roundMacro(food.fat),
   }
 }
 
@@ -302,11 +308,11 @@ function MealGroupCard({ group, onDelete }) {
   return <section className={`meal-group-card ${open ? 'open' : ''}`}>
     <button className="meal-group-summary" onClick={() => setOpen(value => !value)} aria-expanded={open}>
       <span><strong>{group.type}</strong><small>{group.items.length} 項餐點</small></span>
-      <span><strong>P {protein}g</strong><small>{kcal} kcal</small><i>{open ? '⌃' : '⌄'}</i></span>
+      <span><strong>P {formatMacro(protein)}g</strong><small>{kcal} kcal</small><i>{open ? '⌃' : '⌄'}</i></span>
     </button>
     {open && <div className="meal-group-details">
       {group.items.map(({ meal, index }) => <div className="meal-detail-row" key={meal.id || `${meal.food}-${index}`}>
-        <span><strong>{meal.food}</strong><small>P {meal.protein}g · {meal.kcal} kcal{meal.note ? ` · ${meal.note}` : ''}</small></span>
+        <span><strong>{meal.food}</strong><small>P {formatMacro(meal.protein)}g · {meal.kcal} kcal{meal.note ? ` · ${meal.note}` : ''}</small></span>
         <button onClick={() => onDelete(index)} aria-label={`刪除 ${meal.food}`}>刪除</button>
       </div>)}
     </div>}
@@ -401,12 +407,12 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
                 <div key={food.id || `${food.meal}-${food.name}`} className="card meal-quick-card frequent-edit-card is-wiggling" style={{ '--wiggle-delay': `${index * -24}ms` }}>
                   <button className="frequent-remove" onClick={() => onDeleteFrequentFood(food)} aria-label={`刪除 ${food.name}`}>−</button>
                   <button className="frequent-edit-content" onClick={() => beginEditFrequentFood(food)}>
-                    <strong>{food.name}</strong><small>{food.kcal} kcal · P {food.protein}g</small>
+                    <strong>{food.name}</strong><small>{food.kcal} kcal · P {formatMacro(food.protein)}g</small>
                   </button>
                 </div>
               ) : (
                 <button key={food.id || `${food.meal}-${food.name}`} onClick={() => onAdd({ ...food, meal: mealType, source: 'quick' })} className="card meal-quick-card">
-                  <div>{food.name}</div><small>{food.kcal} kcal</small><strong>P {food.protein}g</strong>
+                  <div>{food.name}</div><small>{food.kcal} kcal</small><strong>P {formatMacro(food.protein)}g</strong>
                 </button>
               ))}
             </div>
@@ -481,7 +487,7 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
               <div className="card" style={{ padding: 15 }}>
                 <div style={{ fontWeight: 900, color: 'var(--ink-1)' }}>{mealType} · {analysis.name}</div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 6 }}>
-                  {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
+                  {analysis.kcal} kcal · P {formatMacro(analysis.protein)}g · C {formatMacro(analysis.carbs)}g · F {formatMacro(analysis.fat)}g
                 </div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
                 {analysis.estimated && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>未讀到成分表，本次為一般份量估算；仍可直接加入或改用手動調整。</div>}
@@ -577,7 +583,7 @@ function SwipeMealCard({ meal, onDelete }) {
             {meal.note && <div style={{ color: 'var(--ink-4)', fontSize: 12, marginTop: 5 }}>備註：{meal.note}</div>}
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{meal.protein}g</div>
+            <div style={{ color: 'var(--orange-d)', fontWeight: 900 }}>{formatMacro(meal.protein)}g</div>
             <div style={{ color: 'var(--ink-4)', fontSize: 12, marginTop: 4 }}>{meal.kcal} kcal</div>
           </div>
         </div>
@@ -599,19 +605,26 @@ function MealField({ label, suffix, children }) {
 }
 
 function MacroBar({ label, value, target, color }) {
-  const pct = Math.min(100, Math.round(value / target * 100))
+  const numericValue = Number(value) || 0
+  const pct = Math.min(100, Math.max(0, numericValue / target * 100))
   return (
     <div style={{ marginTop: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--ink-2)', fontSize: 13, fontWeight: 900 }}>
         <span>{label}</span>
-        <span>{value}/{target}g</span>
+        <span>{formatMacro(numericValue)}/{formatMacro(target)}g</span>
       </div>
       <div className="progress-track" style={{ marginTop: 7 }}>
-        <div style={{ width: `${pct}%`, height: '100%', borderRadius: 99, background: color }} />
+        <div className="progress-fill macro-progress-fill" style={{ '--progress': `${pct}%`, background: color }} />
       </div>
     </div>
   )
 }
+
+const formatMacro = value => {
+  const rounded = roundMacro(value)
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+}
+const roundMacro = value => Math.round((Number(value) || 0) * 10) / 10
 
 const emptyDay = {
   calories: 0,

@@ -209,11 +209,10 @@ function ActivityRings({ training, protein, calories }) {
   return (
     <svg className="activity-rings" viewBox="0 0 180 180" aria-label="本週與今日活動進度">
       {rings.map(ring => {
-        const circumference = 2 * Math.PI * ring.radius
-        const progress = Math.max(0.02, Math.min(1, ring.progress || 0))
+        const progress = Math.max(0, Math.min(1, ring.progress || 0))
         return <g key={ring.radius} transform="rotate(-90 90 90)">
           <circle cx="90" cy="90" r={ring.radius} fill="none" stroke={ring.color} strokeOpacity=".18" strokeWidth="12" />
-          <circle cx="90" cy="90" r={ring.radius} fill="none" stroke={ring.color} strokeWidth="12" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - progress)} />
+          <circle className="activity-ring-progress" pathLength="1" style={{ '--ring-offset': 1 - progress }} cx="90" cy="90" r={ring.radius} fill="none" stroke={ring.color} strokeWidth="12" strokeLinecap="round" strokeDasharray="1" strokeDashoffset={1 - progress} />
         </g>
       })}
     </svg>
