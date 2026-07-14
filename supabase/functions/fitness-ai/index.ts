@@ -33,6 +33,7 @@ type ExerciseImageAnalysisRequest = {
 const geminiKey = Deno.env.get('GEMINI_API_KEY')
 const groqKey = Deno.env.get('GROQ_API_KEY')
 const geminiModel = 'gemini-3.5-flash'
+const enableProductLookup = Deno.env.get('ENABLE_PRODUCT_LOOKUP') === 'true'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -104,27 +105,121 @@ class HttpError extends Error {
 
 async function analyzeFood(body: FoodAnalysisRequest) {
   if (!geminiKey && !groqKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
-  const draft = groqKey
-    ? await analyzeFoodWithGroq(body)
-    : await analyzeFoodWithGemini(body)
+  let draft: Record<string, unknown>
+  try {
+    draft = groqKey
+      ? await analyzeFoodWithGroq(body)
+      : await analyzeFoodWithGemini(body)
+  } catch (primaryError) {
+    if (!groqKey || !geminiKey) throw friendlyAiError(primaryError)
+    try {
+      draft = await analyzeFoodWithGemini(body)
+    } catch (fallbackError) {
+      console.error('Both food analysis providers failed:', primaryError, fallbackError)
+      throw friendlyAiError(fallbackError)
+    }
+  }
 
-  if (!draft.isFood || !draft.lookupRecommended || !draft.productQuery) return draft
-  if (!geminiKey) {
-    return {
-      ...draft,
-      note: `${draft.note}；目前未設定網路查證服務，數值以包裝照片辨識結果為準。`,
+  if (!draft.isFood) return draft
+
+  // A readable nutrition label is already the best source. If the model had
+  // to infer a normal serving instead, keep the estimate but label it clearly.
+  if (hasUsableNutrition(draft)) {
+    return finalizeFoodAnalysis(draft)
+  }
+
+  // Product lookup remains opt-in because Gemini's free tier does not include
+  // grounded Google Search. If it is disabled or fails, estimate a normal
+  // serving from the identified food and the user's consumed amount.
+  if (enableProductLookup && geminiKey && draft.lookupRecommended && draft.productQuery) {
+    try {
+      const researched = await researchPackagedFood(draft, body.description || '')
+      if (hasUsableNutrition(researched)) return researched
+    } catch (error) {
+      console.error('Packaged food lookup failed:', error)
     }
   }
 
   try {
-    return await researchPackagedFood(draft, body.description || '')
+    const estimated = await estimateFoodWithoutLabel(draft, body.description || '')
+    if (hasUsableNutrition(estimated)) return finalizeFoodAnalysis({ ...estimated, estimated: true })
   } catch (error) {
-    console.error('Packaged food lookup failed:', error)
-    return {
-      ...draft,
-      note: `${draft.note}；網路查證暫時失敗，數值以包裝照片辨識結果為準。`,
-    }
+    console.error('Typical serving estimate failed:', error)
   }
+
+  return needsNutritionLabel(draft)
+}
+
+function hasUsableNutrition(value: Record<string, unknown>) {
+  return ['kcal', 'protein', 'carbs', 'fat'].some(key => nutritionNumber(value[key]) > 0)
+}
+
+function finalizeFoodAnalysis(draft: Record<string, unknown>) {
+  const hasLabel = String(draft.labelEvidence || '').trim().length > 0
+  const estimated = draft.estimated === true || !hasLabel
+  return {
+    ...draft,
+    estimated,
+    lookupUsed: draft.lookupUsed === true,
+    note: hasLabel
+      ? `${draft.note}；已直接採用照片中的營養標示。`
+      : `${draft.note}；未讀到成分表，數字為一般份量估算。`,
+  }
+}
+
+async function estimateFoodWithoutLabel(draft: Record<string, unknown>, description: string) {
+  const prompt = `你是繁體中文營養估算助手。照片沒有讀到營養標示，但已辨識出食物。請依台灣常見食物的一般份量，估算使用者這次實際吃下的總熱量、蛋白質、碳水與脂肪。
+
+已辨識食物：${draft.name || '未知'}
+使用者備註：${description || '無'}
+實吃數量：${draft.consumedAmount || '依名稱與備註判斷'}
+
+規則：
+1. 使用者說「一個太陽餅」就估算一個一般尺寸太陽餅，不可回傳 0，也不可要求一定要有成分表。
+2. 若品牌或規格不確定，使用同類食品常見值，數字取合理中間值，不要假裝是精確標示。
+3. name 保留食物名稱與實吃數量；note 簡短寫出採用的一般份量與估算依據。
+4. 只有內容完全不是食物時 isFood 才能為 false。
+只回傳 JSON，不要 markdown：
+{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"食物與實吃份量","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一般份量估算依據","consumedAmount":"實吃數量","estimated":true}`
+
+  const text = groqKey
+    ? await callGroq([
+      { role: 'system', content: '你是台灣常見食物營養估算助手；缺少成分表時仍要提供合理的一般份量估算。' },
+      { role: 'user', content: prompt },
+    ], 'llama-3.1-8b-instant')
+    : await callGemini([{ text: prompt }])
+  return normalizeFoodAnalysis({
+    ...draft,
+    ...parseJson(text),
+    labelEvidence: '',
+    lookupRecommended: false,
+    lookupUsed: false,
+    estimated: true,
+  })
+}
+
+function needsNutritionLabel(draft: Record<string, unknown>) {
+  return {
+    ...draft,
+    kcal: 0,
+    protein: 0,
+    carbs: 0,
+    fat: 0,
+    lookupUsed: false,
+    needsNutritionLabel: true,
+    note: '這張照片沒有讀到營養標示。請再加入一張包裝背面的成分表／營養標示後重新分析；這樣只需一次免費辨識。',
+  }
+}
+
+function friendlyAiError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/\b429\b|rate.?limit|quota|resource.?exhausted/i.test(message)) {
+    return new HttpError('免費 AI 額度暫時已達上限，請稍後再試；也可以先用「手動」或「常吃」記錄，不需要購買 token。', 429)
+  }
+  if (/\b401\b|\b403\b|api.?key|permission/i.test(message)) {
+    return new HttpError('AI 服務的免費金鑰目前無法使用，請先改用「手動」或「常吃」記錄。', 503)
+  }
+  return new HttpError('AI 辨識服務暫時無法使用，請稍後再試，或先用「手動」記錄。', 503)
 }
 
 async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
@@ -150,8 +245,9 @@ function foodAnalysisInstruction() {
 判讀規則：
 1. 使用者描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆，所有營養數字按比例換算，名稱也標示「（一顆）」。
 2. 照片若有營養標示，逐字讀取每份量、本包裝含幾份、熱量、蛋白質、碳水與脂肪。包裝標示比一般食物估算可靠。
-3. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格，供下一步上網查證。自製或無品牌的一般餐點則填 false。
-4. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
+3. 沒有讀到營養標示時，只要能從照片或備註知道食物種類與數量，就必須依常見的一般份量估算熱量與三大營養素，不可因缺少成分表而全部填 0。note 必須註明是一般份量估算。
+4. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格。自製或無品牌的一般餐點則填 false。
+5. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
 {"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含實吃份量的餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算或換算依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"這次實際吃的數量"}
@@ -375,6 +471,8 @@ function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
     productQuery: String(parsed.productQuery || '').slice(0, 200),
     labelEvidence: String(parsed.labelEvidence || '').slice(0, 500),
     consumedAmount: String(parsed.consumedAmount || '').slice(0, 100),
+    estimated: parsed.estimated === true,
+    needsNutritionLabel: parsed.needsNutritionLabel === true,
     sources,
   }
 }
