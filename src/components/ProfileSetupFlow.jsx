@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { calculateNutritionTargets, emptyProfileGoals, profilePayload } from '../lib/profile'
+import { calculateNutritionTargets, emptyProfileGoals, profilePayload, profileToGoals } from '../lib/profile'
 import { upsertProfile } from '../lib/db'
 
 const TARGETS = [
@@ -10,10 +10,10 @@ const TARGETS = [
   { id: '提升運動表現', copy: '支援訓練與恢復' },
 ]
 
-export default function ProfileSetupFlow({ session, onComplete }) {
+export default function ProfileSetupFlow({ session, initialProfile, onComplete }) {
   const [step, setStep] = useState(0)
-  const [name, setName] = useState('')
-  const [goals, setGoals] = useState(emptyProfileGoals)
+  const [name, setName] = useState(initialProfile?.display_name || '')
+  const [goals, setGoals] = useState(() => initialProfile ? profileToGoals(initialProfile) : emptyProfileGoals)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const email = session.user.email || '你的 Email'

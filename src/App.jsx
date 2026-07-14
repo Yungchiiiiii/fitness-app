@@ -93,7 +93,7 @@ export default function App() {
   }
 
   if (profileState.status === 'required') {
-    return <ProfileSetupFlow session={session} onComplete={profile => setProfileState({ status: 'ready', profile, error: '' })} />
+    return <ProfileSetupFlow session={session} initialProfile={profileState.profile} onComplete={profile => setProfileState({ status: 'ready', profile, error: '' })} />
   }
 
   const screens = {

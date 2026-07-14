@@ -1,3 +1,5 @@
+export const PROFILE_SETUP_VERSION = 2
+
 export const emptyProfileGoals = {
   height: '',
   weight: '',
@@ -21,6 +23,8 @@ export const profileToGoals = profile => ({
 })
 
 export const isProfileComplete = profile => Boolean(
+  Number(profile?.profile_setup_version) >= PROFILE_SETUP_VERSION
+  &&
   profile?.display_name?.trim()
   && Number(profile?.height_cm) > 0
   && Number(profile?.weight_kg) > 0
@@ -61,4 +65,5 @@ export const profilePayload = (userId, name, goals) => ({
   protein_target: Number(goals.protein),
   carbs_target: Number(goals.carbs),
   fat_target: Number(goals.fat),
+  profile_setup_version: PROFILE_SETUP_VERSION,
 })
