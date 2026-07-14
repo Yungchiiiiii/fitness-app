@@ -132,7 +132,6 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
       if (error) throw error
       const item = customToLibraryItem(data)
       setCustomExercises(previous => [...previous.filter(row => row.name !== item.name), item])
-      addMovement(item)
       setFilter(category)
       setCustomName('')
       setCustomCategory('auto')
@@ -322,7 +321,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
           </div>
           {customTarget && <div className="ai-target-result"><span>AI 建議</span><strong>{CATEGORY_META[customCategory]?.label} · {customTarget}</strong></div>}
           {customError && <div className="custom-error">{customError}</div>}
-          <button className="save-custom-exercise" onClick={editingCustomId ? saveCustomEdit : saveCustom} disabled={classifying || !customName.trim()}>{editingCustomId ? '儲存修改' : 'AI 分類、儲存並加入'}</button>
+          <button className="save-custom-exercise" onClick={editingCustomId ? saveCustomEdit : saveCustom} disabled={classifying || !customName.trim()}>{editingCustomId ? '儲存修改' : 'AI 分類並儲存'}</button>
           {editingCustomId && <button className="cancel-custom-edit" onClick={() => { setEditingCustomId(null); setCustomName(''); setCustomCategory('auto'); setCustomTarget('') }}>取消編輯</button>}
         </div>}
 
