@@ -28,6 +28,7 @@
 - Profile goal editing now labels every input, uses multi-select goals (`增肌`, `減脂`, `維持體重`, `提升運動表現`), clarifies the weekly training-days field, and places AI recalculation directly above the macro target inputs.
 - Weekly training target is now stored locally and synced back to the dashboard. The dashboard `週目標` and weekly progress card follow the profile setting, capped from 1 to 7 days.
 - Add meal photo mode now has a photo picker, a text description field, and AI nutrition analysis through the Supabase `fitness-ai` Edge Function. The frontend does not store AI keys.
+- Packaged foods now use a two-pass analysis: the vision model reads the exact product, flavor, nutrition label, package count, and consumed amount; Gemini Google Search grounding then verifies branded convenience-store/supermarket products and recalculates macros for the amount actually eaten. Grounding needs `GEMINI_API_KEY`; photo-label analysis still falls back to Groq when Gemini is unavailable.
 - AI coach chat now calls the Supabase `fitness-ai` Edge Function and includes prototype app context: macros, pain logs, weight trend, recent training, and today's meals. It falls back to a safe local reply if the API is unavailable.
 - Recent training cards and daily meal cards use iOS-style left swipe actions for edit/delete.
 - `其他` training category is safer for prototype save: sport entries default to 60 minutes and persist with a duration unit.

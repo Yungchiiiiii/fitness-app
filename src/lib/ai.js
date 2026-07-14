@@ -37,6 +37,8 @@ export async function analyzeFoodWithGemini({ files = [], description }) {
     carbs: Number(parsed.carbs) || 0,
     fat: Number(parsed.fat) || 0,
     note: parsed.note || '由 AI 依照片與描述估算。',
+    lookupUsed: parsed.lookupUsed === true,
+    sources: Array.isArray(parsed.sources) ? parsed.sources.slice(0, 3) : [],
   }
 }
 
