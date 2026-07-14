@@ -708,6 +708,16 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .custom-exercise-form { margin-top: 14px; padding: 16px; border: 1px solid rgba(166,255,50,.24); border-radius: 18px; background: #111113; display: grid; gap: 11px; }
 .custom-exercise-form > strong { font-size: 17px; }
 .custom-exercise-form input,.custom-exercise-form select { width: 100%; min-width: 0; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: #202023; color: #fff; padding: 13px; outline: 0; }
+.exercise-photo-intro { display: grid; gap: 4px; margin-top: 3px; }
+.exercise-photo-intro strong { color: #f5f5f7; font-size: 14px; }
+.exercise-photo-intro span { color: var(--ink-3); font-size: 12px; line-height: 1.5; }
+.exercise-photo-source label { background: #202023; }
+.exercise-photo-previews { margin-top: 1px; }
+.analyze-exercise-photo { width: 100%; border: 1px solid rgba(166,255,50,.38); border-radius: 12px; padding: 13px; background: rgba(166,255,50,.1); color: var(--neon); font-weight: 900; }
+.analyze-exercise-photo:disabled { opacity: .45; }
+.exercise-photo-result { display: grid; gap: 5px; padding: 12px; border-radius: 12px; background: rgba(166,255,50,.08); border: 1px solid rgba(166,255,50,.2); }
+.exercise-photo-result strong { color: var(--neon); font-size: 14px; }
+.exercise-photo-result span { color: #b7b7bc; font-size: 12px; line-height: 1.5; }
 .custom-classify-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .custom-classify-row button { border-radius: 12px; padding: 0 13px; background: #303034; color: #fff; }
 .ai-target-result { display: flex; flex-direction: column; gap: 3px; color: var(--neon); }

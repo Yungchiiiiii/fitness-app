@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { classifyExerciseWithAI } from '../lib/ai'
+import { analyzeExercisePhotoWithAI, classifyExerciseWithAI } from '../lib/ai'
 import {
   createCustomExercise,
   createExercise,
@@ -46,6 +46,8 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
   const [customName, setCustomName] = useState('')
   const [customCategory, setCustomCategory] = useState('auto')
   const [customTarget, setCustomTarget] = useState('')
+  const [customPhotos, setCustomPhotos] = useState([])
+  const [photoAnalysis, setPhotoAnalysis] = useState(null)
   const [classifying, setClassifying] = useState(false)
   const [customError, setCustomError] = useState('')
   const [editingCustomId, setEditingCustomId] = useState(null)
@@ -93,16 +95,20 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
   const updateNote = (name, note) => setSelected(previous => previous.map(item => item.name === name ? { ...item, note } : item))
 
   const analyzeCustom = async () => {
-    if (!customName.trim()) {
-      setCustomError('先輸入動作或器械名稱。')
+    if (!customPhotos.length && !customName.trim()) {
+      setCustomError('請拍攝器械、上傳動作照片，或輸入名稱。')
       return null
     }
     setClassifying(true)
     setCustomError('')
     try {
-      const result = await classifyExerciseWithAI(customName.trim())
+      const result = customPhotos.length
+        ? await analyzeExercisePhotoWithAI({ files: customPhotos, description: customName })
+        : await classifyExerciseWithAI(customName.trim())
+      if (result.name) setCustomName(result.name)
       setCustomCategory(result.category)
       setCustomTarget(result.target)
+      setPhotoAnalysis(result.name ? result : null)
       return result
     } catch (error) {
       setCustomError(`AI 判斷失敗：${error.message}`)
@@ -116,7 +122,8 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
     const suggestion = customCategory === 'auto' || !customTarget ? await analyzeCustom() : null
     const category = suggestion?.category || customCategory
     const target = suggestion?.target || customTarget
-    if (!customName.trim() || !CATEGORY_META[category]) return
+    const resolvedName = String(suggestion?.name || customName).trim()
+    if (!resolvedName || !CATEGORY_META[category]) return
     setClassifying(true)
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -124,7 +131,7 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
       const inputType = CATEGORY_META[category].inputType
       const { data, error } = await createCustomExercise({
         user_id: user.id,
-        name: customName.trim(),
+        name: resolvedName,
         category,
         input_type: inputType,
         target: target || CATEGORY_META[category].fallbackTarget,
@@ -136,6 +143,8 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
       setCustomName('')
       setCustomCategory('auto')
       setCustomTarget('')
+      setCustomPhotos([])
+      setPhotoAnalysis(null)
       setCustomError('')
     } catch (error) {
       setCustomError(`新增失敗：${error.message}`)
@@ -149,6 +158,8 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
     setCustomName(item.name)
     setCustomCategory(item.category)
     setCustomTarget(item.target)
+    setCustomPhotos([])
+    setPhotoAnalysis(null)
     setCustomError('')
     window.setTimeout(() => document.querySelector('.custom-exercise-form input')?.focus(), 0)
   }
@@ -312,6 +323,15 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
         {filter === 'custom' && !editingLibrary && <div className="custom-exercise-form">
           <strong>{editingCustomId ? '編輯自訂運動' : '新增自己的器械或動作'}</strong>
           <input value={customName} onChange={event => setCustomName(event.target.value)} placeholder="名稱，例如：臀部那台往外推" />
+          {!editingCustomId && <>
+            <div className="exercise-photo-intro"><strong>不知道名稱？直接拍給 AI 看</strong><span>器械照片或別人的動作照片都可以，AI 會填入正式名稱與分類。</span></div>
+            <div className="photo-source-grid exercise-photo-source">
+              <label><span>📷 拍器械</span><small>直接開啟相機</small><input type="file" accept="image/*" capture="environment" onChange={event => { setCustomPhotos(previous => [...previous, ...Array.from(event.target.files || [])].slice(-2)); setCustomCategory('auto'); setCustomTarget(''); setPhotoAnalysis(null); event.target.value = '' }} /></label>
+              <label><span>▧ 上傳照片</span><small>器械或動作截圖</small><input type="file" accept="image/*" multiple onChange={event => { setCustomPhotos(previous => [...previous, ...Array.from(event.target.files || [])].slice(-2)); setCustomCategory('auto'); setCustomTarget(''); setPhotoAnalysis(null); event.target.value = '' }} /></label>
+            </div>
+            {!!customPhotos.length && <ExercisePhotoPreviews files={customPhotos} onRemove={index => { setCustomPhotos(previous => previous.filter((_, fileIndex) => fileIndex !== index)); setPhotoAnalysis(null) }} />}
+            <button className="analyze-exercise-photo" onClick={analyzeCustom} disabled={classifying}>{classifying ? 'AI 辨識中…' : '用照片辨識名稱與分類'}</button>
+          </>}
           <div className="custom-classify-row">
             <select value={customCategory} onChange={event => setCustomCategory(event.target.value)}>
               <option value="auto">讓 AI 自動分類</option>
@@ -320,9 +340,10 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
             <button onClick={analyzeCustom} disabled={classifying}>{classifying ? '判斷中…' : 'AI 判斷部位'}</button>
           </div>
           {customTarget && <div className="ai-target-result"><span>AI 建議</span><strong>{CATEGORY_META[customCategory]?.label} · {customTarget}</strong></div>}
+          {photoAnalysis && <div className="exercise-photo-result"><strong>辨識為：{photoAnalysis.name}</strong><span>{photoAnalysis.equipment ? `${photoAnalysis.equipment} · ` : ''}{photoAnalysis.note}</span></div>}
           {customError && <div className="custom-error">{customError}</div>}
-          <button className="save-custom-exercise" onClick={editingCustomId ? saveCustomEdit : saveCustom} disabled={classifying || !customName.trim()}>{editingCustomId ? '儲存修改' : 'AI 分類並儲存'}</button>
-          {editingCustomId && <button className="cancel-custom-edit" onClick={() => { setEditingCustomId(null); setCustomName(''); setCustomCategory('auto'); setCustomTarget('') }}>取消編輯</button>}
+          <button className="save-custom-exercise" onClick={editingCustomId ? saveCustomEdit : saveCustom} disabled={classifying || (!customName.trim() && !customPhotos.length)}>{editingCustomId ? '儲存修改' : 'AI 分類並儲存'}</button>
+          {editingCustomId && <button className="cancel-custom-edit" onClick={() => { setEditingCustomId(null); setCustomName(''); setCustomCategory('auto'); setCustomTarget(''); setCustomPhotos([]); setPhotoAnalysis(null) }}>取消編輯</button>}
         </div>}
 
         {filter !== 'custom' && <div className="library-list">
@@ -343,6 +364,18 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
       </section>
     </main>
   </div>
+}
+
+function ExercisePhotoPreviews({ files, onRemove }) {
+  return <div className="photo-preview-grid exercise-photo-previews">
+    {files.map((file, index) => <ExercisePhotoPreview key={`${file.name}-${file.lastModified}-${index}`} file={file} onRemove={() => onRemove(index)} />)}
+  </div>
+}
+
+function ExercisePhotoPreview({ file, onRemove }) {
+  const previewUrl = useMemo(() => URL.createObjectURL(file), [file])
+  useEffect(() => () => URL.revokeObjectURL(previewUrl), [previewUrl])
+  return <div className="photo-preview-item"><img src={previewUrl} alt={`待辨識照片 ${file.name}`} /><button onClick={onRemove} aria-label={`移除 ${file.name}`}>×</button></div>
 }
 
 function SwipeCustomExercise({ item, onEdit, onDelete, onPick, picked }) {
