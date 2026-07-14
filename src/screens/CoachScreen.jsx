@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { askCoachWithAI } from '../lib/ai'
-import { getDailyNutrition, getFoodLogs, getProfile, getRecoveryLogs, getSessions, getWeightLogs } from '../lib/db'
+import { getDailyNutrition, getFoodLogs, getFoodLogsRange, getProfile, getRecoveryLogs, getSessions, getWeightLogs } from '../lib/db'
 import { demoSessions, macroSnapshot, mealCalendar, painLogs, weightLogs } from '../lib/prototypeData'
 
-const quickPrompts = ['今天肩膀不舒服，怎麼練胸？', '最近力量有點掉，飲食要調嗎？', '幫我排明天 45 分鐘訓練']
+const quickPrompts = ['比較這個月和上個月的飲食，我可以怎麼進步？', '今天肩膀不舒服，怎麼練胸？', '幫我排明天 45 分鐘訓練']
 
 export default function CoachScreen({ session }) {
   const prototypeOnly = !!session?.prototype
@@ -18,21 +18,24 @@ export default function CoachScreen({ session }) {
 
   useEffect(() => {
     if (prototypeOnly || !session?.user?.id) return undefined
-    const today = new Date().toISOString().split('T')[0]
+    const today = localDate(new Date())
+    const historyFrom = localDate(new Date(new Date().getFullYear(), new Date().getMonth() - 2, 1))
     let cancelled = false
     Promise.all([
       getSessions(session.user.id),
       getDailyNutrition(session.user.id, today, today),
       getFoodLogs(session.user.id, today),
+      getFoodLogsRange(session.user.id, historyFrom, today),
       getWeightLogs(session.user.id),
       getRecoveryLogs(session.user.id),
       getProfile(session.user.id),
-    ]).then(([sessionsResult, nutritionResult, mealsResult, weightsResult, recoveryResult, profileResult]) => {
+    ]).then(([sessionsResult, nutritionResult, mealsResult, foodHistoryResult, weightsResult, recoveryResult, profileResult]) => {
       if (cancelled) return
       setContextData(buildBackendCoachContext({
         sessions: sessionsResult.data || [],
         nutrition: nutritionResult.data?.[0],
         meals: mealsResult.data || [],
+        foodHistory: foodHistoryResult.data || [],
         weights: weightsResult.data || [],
         recovery: recoveryResult.data || [],
         profile: profileResult.data || {},
@@ -150,7 +153,7 @@ function buildCoachContext() {
   }
 }
 
-function buildBackendCoachContext({ sessions, nutrition, meals, weights, recovery, profile }) {
+function buildBackendCoachContext({ sessions, nutrition, meals, foodHistory, weights, recovery, profile }) {
   const value = (key) => Number(nutrition?.[key]) || 0
   const target = (key, fallback) => Number(profile?.[key]) || fallback
   const recentTraining = sessions.slice(0, 12).map(s => ({
@@ -184,11 +187,82 @@ function buildBackendCoachContext({ sessions, nutrition, meals, weights, recover
       carbs: meal.carbs,
       fat: meal.fat,
     })),
+    monthlyNutrition: buildMonthlyNutrition(foodHistory),
   }
 }
 
 function emptyCoachContext() {
-  return { macroSnapshot: null, painLogs: [], weightTrend: {}, recentTraining: [], trainingNotes: [], todayMeals: [] }
+  return { macroSnapshot: null, painLogs: [], weightTrend: {}, recentTraining: [], trainingNotes: [], todayMeals: [], monthlyNutrition: [] }
+}
+
+function localDate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function buildMonthlyNutrition(logs = []) {
+  const grouped = logs.reduce((months, log) => {
+    const month = String(log.date || '').slice(0, 7)
+    if (!month) return months
+    const current = months[month] || {
+      month,
+      dates: new Set(),
+      mealCount: 0,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      mealTypes: {},
+      foods: {},
+    }
+    current.dates.add(log.date)
+    current.mealCount += 1
+    current.calories += Number(log.kcal) || 0
+    current.protein += Number(log.protein) || 0
+    current.carbs += Number(log.carbs) || 0
+    current.fat += Number(log.fat) || 0
+    current.mealTypes[log.meal || '未分類'] = (current.mealTypes[log.meal || '未分類'] || 0) + 1
+    current.foods[log.name || '未命名餐點'] = (current.foods[log.name || '未命名餐點'] || 0) + 1
+    months[month] = current
+    return months
+  }, {})
+
+  const summaries = Object.values(grouped).sort((a, b) => a.month.localeCompare(b.month)).map(item => {
+    const days = Math.max(1, item.dates.size)
+    return {
+      month: item.month,
+      loggedDays: item.dates.size,
+      mealCount: item.mealCount,
+      dailyAverage: {
+        calories: Math.round(item.calories / days),
+        protein: Math.round(item.protein / days),
+        carbs: Math.round(item.carbs / days),
+        fat: Math.round(item.fat / days),
+      },
+      mealTypes: item.mealTypes,
+      frequentFoods: Object.entries(item.foods)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([name, count]) => ({ name, count })),
+    }
+  })
+
+  return summaries.map((summary, index) => {
+    const previous = summaries[index - 1]
+    if (!previous) return summary
+    const difference = key => summary.dailyAverage[key] - previous.dailyAverage[key]
+    return {
+      ...summary,
+      changeFromPreviousMonth: {
+        calories: difference('calories'),
+        protein: difference('protein'),
+        carbs: difference('carbs'),
+        fat: difference('fat'),
+      },
+    }
+  })
 }
 
 function buildReply(prompt, reason = '', context = emptyCoachContext()) {
