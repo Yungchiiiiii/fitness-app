@@ -63,3 +63,28 @@ export async function classifyExerciseWithAI(name) {
   if (durationSport) return { ...classification, category: 'cardio', inputType: 'cardio' }
   return classification
 }
+
+export async function analyzeExercisePhotoWithAI({ files = [], description = '' }) {
+  const cleanDescription = String(description || '').trim()
+  if (!files.length && !cleanDescription) throw new Error('請拍攝器械、上傳動作照片，或輸入簡短描述')
+  const images = await Promise.all(files.slice(0, 2).map(fileToImage))
+  const { data, error } = await supabase.functions.invoke('fitness-ai', {
+    body: { task: 'exercise-image-analysis', description: cleanDescription, images },
+  })
+  if (error) throw new Error(await functionErrorMessage(error, 'AI 辨識失敗'))
+  const exercise = data?.exercise
+  if (!exercise?.detected) throw new Error(exercise?.note || '照片中沒有辨識到器械或運動動作，請換一張較清楚的照片。')
+  if (!exercise.name || !exercise.category || !exercise.target) throw new Error('AI 沒有回傳完整的運動分類')
+  return exercise
+}
+
+async function functionErrorMessage(error, fallback) {
+  try {
+    const payload = await error?.context?.clone?.().json()
+    if (payload?.error) return payload.error
+  } catch {
+    // Supabase does not always expose a JSON response body (for example, a
+    // network error). Fall back to its own message below.
+  }
+  return error?.message || fallback
+}
