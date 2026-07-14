@@ -114,8 +114,8 @@ function ProgressLine({ data, unit }) {
   }))
   return <svg className="progress-chart" viewBox="0 0 200 132" aria-label={`${unit}變化圖`}>
     {[32, 64, 96].map(y => <path key={y} d={`M14 ${y}H186`} stroke="rgba(255,255,255,.12)" />)}
-    <polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="var(--neon)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-    {points.map((point, index) => <g key={`${point.date}-${index}`}>
+    <polyline className="chart-draw-line" pathLength="1" points={points.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke="var(--neon)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    {points.map((point, index) => <g className="chart-point" style={{ '--point-delay': `${.45 + index * .08}s` }} key={`${point.date}-${index}`}>
       <text x={point.x} y={Math.max(10, point.y - 10)} textAnchor="middle" fontSize="8" fill="#D8FFAB" fontWeight="900">{point.best}{unit}</text>
       <circle cx={point.x} cy={point.y} r="5" fill="#0c0c0d" stroke="var(--neon)" strokeWidth="3" />
       <text x={point.x} y="124" textAnchor="middle" fontSize="9" fill="#A1A1A6" fontWeight="800">{point.date}</text>
@@ -126,7 +126,9 @@ function ProgressLine({ data, unit }) {
 function ExercisePicker({ category, selected, setCounts, customExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
   const builtIn = (WORLD_GYM_LIBRARY[category] || []).map(item => item.name)
   const custom = customExercises.filter(item => item.category === category).map(item => item.name)
-  const names = [...new Set([...custom, ...builtIn])].filter(name => !hiddenExerciseNames.includes(name))
+  const names = [...new Set([...custom, ...builtIn])]
+    .filter(name => !hiddenExerciseNames.includes(name))
+    .sort((a, b) => (setCounts[b] || 0) - (setCounts[a] || 0) || a.localeCompare(b, 'zh-Hant'))
   return <div className="sheet-backdrop training-picker-backdrop" onClick={event => event.target === event.currentTarget && onClose()}>
     <section className="sheet-panel training-picker">
       <div className="sheet-handle" />
