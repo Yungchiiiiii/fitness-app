@@ -26,6 +26,7 @@ type ExerciseClassificationRequest = {
 
 const geminiKey = Deno.env.get('GEMINI_API_KEY')
 const groqKey = Deno.env.get('GROQ_API_KEY')
+const geminiModel = 'gemini-3.5-flash'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -298,11 +299,15 @@ function getFoodImages(body: FoodAnalysisRequest) {
 }
 
 async function callGemini(parts: Array<Record<string, unknown>>) {
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      generationConfig: { temperature: 0.45, maxOutputTokens: 900 },
+      generationConfig: {
+        temperature: 0.45,
+        maxOutputTokens: 900,
+        thinkingConfig: { thinkingLevel: 'low' },
+      },
       contents: [{ role: 'user', parts }],
     }),
   })
@@ -317,11 +322,15 @@ async function callGemini(parts: Array<Record<string, unknown>>) {
 }
 
 async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      generationConfig: { temperature: 0.2, maxOutputTokens: 1200 },
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 1200,
+        thinkingConfig: { thinkingLevel: 'low' },
+      },
       tools: [{ google_search: {} }],
       contents: [{ role: 'user', parts }],
     }),
