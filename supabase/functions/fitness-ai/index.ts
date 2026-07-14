@@ -88,16 +88,33 @@ class HttpError extends Error {
 }
 
 async function analyzeFood(body: FoodAnalysisRequest) {
-  if (groqKey) {
-    return analyzeFoodWithGroq(body)
+  if (!geminiKey && !groqKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
+  const draft = groqKey
+    ? await analyzeFoodWithGroq(body)
+    : await analyzeFoodWithGemini(body)
+
+  if (!draft.isFood || !draft.lookupRecommended || !draft.productQuery) return draft
+  if (!geminiKey) {
+    return {
+      ...draft,
+      note: `${draft.note}；目前未設定網路查證服務，數值以包裝照片辨識結果為準。`,
+    }
   }
-  if (!geminiKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
+
+  try {
+    return await researchPackagedFood(draft, body.description || '')
+  } catch (error) {
+    console.error('Packaged food lookup failed:', error)
+    return {
+      ...draft,
+      note: `${draft.note}；網路查證暫時失敗，數值以包裝照片辨識結果為準。`,
+    }
+  }
+}
+
+async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
   const parts: Array<Record<string, unknown>> = [{
-    text: `你是營養分析助手。根據照片與使用者描述估算餐點營養。所有照片都屬於同一餐，可能是分批上菜；請合併估算整餐，並避免重複計算看起來相同的食物。
-只回傳 JSON，不要 markdown，不要多餘文字。
-格式：
-{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
-如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。
+    text: `${foodAnalysisInstruction()}
 使用者描述：${body.description || '無'}`,
   }]
 
@@ -110,18 +127,47 @@ async function analyzeFood(body: FoodAnalysisRequest) {
     })
   }
 
-  const parsed = parseJson(await callGemini(parts))
-  const isFood = parsed.isFood !== false
-  return {
-    isFood,
-    meal: parsed.meal || '點心',
-    name: parsed.name || (isFood ? '未命名餐點' : '無餐點'),
-    kcal: isFood ? Number(parsed.kcal) || 0 : 0,
-    protein: isFood ? Number(parsed.protein) || 0 : 0,
-    carbs: isFood ? Number(parsed.carbs) || 0 : 0,
-    fat: isFood ? Number(parsed.fat) || 0 : 0,
-    note: parsed.note || (isFood ? '由 AI 依照片與描述估算。' : '沒有辨識到可記錄的餐點。'),
-  }
+  return normalizeFoodAnalysis(parseJson(await callGemini(parts)))
+}
+
+function foodAnalysisInstruction() {
+  return `你是繁體中文營養分析助手。根據照片與使用者描述計算這次實際吃下的餐點營養。所有照片都屬於同一餐，可能包含食物正面、營養標示或分批上菜；請合併分析，避免重複計算。
+判讀規則：
+1. 使用者描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆，所有營養數字按比例換算，名稱也標示「（一顆）」。
+2. 照片若有營養標示，逐字讀取每份量、本包裝含幾份、熱量、蛋白質、碳水與脂肪。包裝標示比一般食物估算可靠。
+3. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格，供下一步上網查證。自製或無品牌的一般餐點則填 false。
+4. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
+只回傳 JSON，不要 markdown，不要多餘文字。
+格式：
+{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含實吃份量的餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算或換算依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"這次實際吃的數量"}
+如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。`
+}
+
+async function researchPackagedFood(draft: Record<string, unknown>, description: string) {
+  const prompt = `你是台灣食品營養資料查證助手。請使用 Google Search 查證以下超商、超市或品牌商品的正確品名、口味、規格與營養標示，並計算使用者這次實際吃下的份量。
+
+查詢商品：${draft.productQuery}
+使用者備註：${description || '無'}
+照片初步辨識：${JSON.stringify(draft)}
+
+規則：
+1. 必須核對完全相同的品牌、商品、口味與規格；例如滿漢大餐不同口味不可混用。
+2. 資料優先順序是：照片中清楚可讀的實品營養標示、品牌官方頁、台灣通路商品頁、政府或可信食品資料庫。網頁若是其他規格或其他口味，不可覆蓋實品標示。
+3. 使用者說的是實際吃下的數量。若一包兩顆而只吃一顆，請將整包數值除以二；若標示本來就是每顆，直接使用每顆數值。所有數字都必須是實吃份量的總和。
+4. 不確定時保留照片標示或初步辨識值，note 清楚說明，不可捏造精確數字。
+5. name 必須包含品牌、完整品名／口味與實吃份量。note 用一句繁體中文寫出換算式或資料依據。
+只回傳 JSON，不要 markdown，不要其他文字：
+{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"商品與實吃份量","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"資料來源層級與份量換算","consumedAmount":"實吃數量"}`
+
+  const grounded = await callGeminiGrounded([{ text: prompt }])
+  if (!grounded.searched) throw new Error('Gemini did not perform the required product search')
+  return normalizeFoodAnalysis({
+    ...draft,
+    ...parseJson(grounded.text),
+    lookupRecommended: true,
+    lookupUsed: grounded.searched,
+    sources: grounded.sources,
+  })
 }
 
 async function coachReply(body: CoachChatRequest) {
@@ -187,11 +233,8 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
   const content: Array<Record<string, unknown>> = [
     {
       type: 'text',
-      text: `請把所有照片視為同一餐的不同食物或不同上菜時間，合併分析整餐，避免重複計算相同食物。使用者補充描述：${description || '無'}。
-只回傳 JSON，不要 markdown，不要多餘文字。
-格式：
-{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算依據"}
-如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。`,
+      text: `${foodAnalysisInstruction()}
+使用者描述：${description || '無'}`,
     },
   ]
 
@@ -211,18 +254,42 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
     },
     { role: 'user', content },
   ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
-  const parsed = parseJson(text)
+  return normalizeFoodAnalysis(parseJson(text))
+}
+
+function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
   const isFood = parsed.isFood !== false
+  const sources = Array.isArray(parsed.sources)
+    ? parsed.sources
+      .filter(source => source && typeof source === 'object')
+      .map(source => ({
+        title: String((source as Record<string, unknown>).title || '查證來源').slice(0, 120),
+        url: String((source as Record<string, unknown>).url || ''),
+      }))
+      .filter(source => /^https:\/\//.test(source.url))
+      .slice(0, 3)
+    : []
   return {
     isFood,
-    meal: parsed.meal || '點心',
-    name: parsed.name || (isFood ? '未命名餐點' : '無餐點'),
-    kcal: isFood ? Number(parsed.kcal) || 0 : 0,
-    protein: isFood ? Number(parsed.protein) || 0 : 0,
-    carbs: isFood ? Number(parsed.carbs) || 0 : 0,
-    fat: isFood ? Number(parsed.fat) || 0 : 0,
-    note: parsed.note || (isFood ? '由 AI 依文字描述估算。' : '沒有辨識到可記錄的餐點。'),
+    meal: ['早餐', '午餐', '晚餐', '點心'].includes(String(parsed.meal)) ? String(parsed.meal) : '點心',
+    name: String(parsed.name || (isFood ? '未命名餐點' : '無餐點')).slice(0, 160),
+    kcal: isFood ? nutritionNumber(parsed.kcal) : 0,
+    protein: isFood ? nutritionNumber(parsed.protein) : 0,
+    carbs: isFood ? nutritionNumber(parsed.carbs) : 0,
+    fat: isFood ? nutritionNumber(parsed.fat) : 0,
+    note: String(parsed.note || (isFood ? '由 AI 依照片與描述估算。' : '沒有辨識到可記錄的餐點。')).slice(0, 500),
+    lookupRecommended: parsed.lookupRecommended === true,
+    lookupUsed: parsed.lookupUsed === true,
+    productQuery: String(parsed.productQuery || '').slice(0, 200),
+    labelEvidence: String(parsed.labelEvidence || '').slice(0, 500),
+    consumedAmount: String(parsed.consumedAmount || '').slice(0, 100),
+    sources,
   }
+}
+
+function nutritionNumber(value: unknown) {
+  const number = Number(value)
+  return Number.isFinite(number) && number >= 0 ? Math.round(number * 10) / 10 : 0
 }
 
 function getFoodImages(body: FoodAnalysisRequest) {
@@ -247,6 +314,40 @@ async function callGemini(parts: Array<Record<string, unknown>>) {
 
   const data = await res.json()
   return data.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('\n') || ''
+}
+
+async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      generationConfig: { temperature: 0.2, maxOutputTokens: 1200 },
+      tools: [{ google_search: {} }],
+      contents: [{ role: 'user', parts }],
+    }),
+  })
+
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(`Gemini grounded request failed: ${res.status} ${detail.slice(0, 180)}`)
+  }
+
+  const data = await res.json()
+  const candidate = data.candidates?.[0]
+  const groundingMetadata = candidate?.groundingMetadata || {}
+  const chunks = groundingMetadata.groundingChunks || []
+  return {
+    text: candidate?.content?.parts?.map((part: { text?: string }) => part.text || '').join('\n') || '',
+    searched: Array.isArray(groundingMetadata.webSearchQueries) && groundingMetadata.webSearchQueries.length > 0,
+    sources: chunks
+      .map((chunk: { web?: { title?: string; uri?: string } }) => ({
+        title: chunk.web?.title || 'Google Search 查證來源',
+        url: chunk.web?.uri || '',
+      }))
+      .filter((source: { url: string }) => /^https:\/\//.test(source.url))
+      .filter((source: { url: string }, index: number, all: Array<{ url: string }>) => all.findIndex(item => item.url === source.url) === index)
+      .slice(0, 3),
+  }
 }
 
 async function callGroq(messages: Array<{ role: string; content: unknown }>, model = 'llama-3.1-8b-instant') {

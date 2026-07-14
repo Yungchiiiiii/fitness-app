@@ -484,6 +484,10 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
                   {analysis.kcal} kcal · P {analysis.protein}g · C {analysis.carbs}g · F {analysis.fat}g
                 </div>
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
+                {analysis.lookupUsed && <div style={{ color: '#16A34A', fontSize: 12, marginTop: 8, fontWeight: 800 }}>已用網路資料查證商品與份量</div>}
+                {!!analysis.sources?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                  {analysis.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" style={{ color: 'var(--neon)', fontSize: 12 }}>查看 {source.title}</a>)}
+                </div>}
                 <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, meal: mealType, source: 'ai' })}>加入這一天</button>
               </div>
             )}
