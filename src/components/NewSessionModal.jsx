@@ -13,7 +13,7 @@ import {
   updateCustomExercise,
   updateSession,
 } from '../lib/db'
-import { CATEGORY_META, WORLD_GYM_LIBRARY } from '../lib/exerciseLibrary'
+import { CATEGORY_META, WORLD_GYM_LIBRARY, getHistoricalExercises } from '../lib/exerciseLibrary'
 import { supabase } from '../lib/supabase'
 
 export const CAT_META = CATEGORY_META
@@ -66,16 +66,20 @@ export function ExercisePickerSheet({ sessions, onClose, onSaved, onLibraryChang
   }, [])
 
   const library = useMemo(() => {
+    const historicalExercises = getHistoricalExercises(sessions)
     const rows = filter === 'custom'
       ? []
       : [
           ...customExercises.filter(item => item.category === filter),
+          ...historicalExercises.filter(item => item.category === filter),
           ...(WORLD_GYM_LIBRARY[filter] || []).map(item => ({ ...item, category: filter })),
         ]
     const normalizedQuery = query.trim().toLowerCase()
-    return rows.filter(item => !hiddenExerciseNames.includes(item.name))
+    const names = new Set()
+    return rows.filter(item => !names.has(item.name) && names.add(item.name))
+      .filter(item => !hiddenExerciseNames.includes(item.name))
       .filter(item => !normalizedQuery || `${item.name} ${item.target} ${item.equipment}`.toLowerCase().includes(normalizedQuery))
-  }, [customExercises, filter, hiddenExerciseNames, query])
+  }, [customExercises, filter, hiddenExerciseNames, query, sessions])
 
   const addMovement = item => {
     if (selected.some(movement => movement.name === item.name)) return

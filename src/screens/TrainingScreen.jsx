@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getCustomExercises, getExerciseProgress, getHiddenExercises, getSessions } from '../lib/db'
-import { CATEGORY_META, WORLD_GYM_LIBRARY, getExerciseByName } from '../lib/exerciseLibrary'
+import { CATEGORY_META, WORLD_GYM_LIBRARY, getExerciseByName, getHistoricalExercises } from '../lib/exerciseLibrary'
 
 const categoryKeys = Object.keys(CATEGORY_META)
 const formatDate = value => new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
@@ -27,8 +27,10 @@ export default function TrainingScreen({ session }) {
     ]).then(([progressResult, sessionResult, customResult, hiddenResult]) => {
       if (cancelled) return
       const hiddenNames = (hiddenResult.data || []).map(row => row.exercise_name)
+      const historicalExercises = getHistoricalExercises(sessionResult.data || [])
       const visibleNames = [
         ...(customResult.data || []).map(item => item.name),
+        ...historicalExercises.map(item => item.name),
         ...Object.values(WORLD_GYM_LIBRARY).flatMap(items => items.map(item => item.name)),
       ].filter(name => !hiddenNames.includes(name))
       setProgress(progressResult.data || [])
@@ -41,26 +43,32 @@ export default function TrainingScreen({ session }) {
     return () => { cancelled = true }
   }, [selected, session?.user?.id])
 
-  const selectedMeta = getExerciseByName(selected) || customExercises.find(item => item.name === selected)
+  const historicalExercises = useMemo(() => getHistoricalExercises(sessions), [sessions])
+  const selectedMeta = getExerciseByName(selected) || customExercises.find(item => item.name === selected) || historicalExercises.find(item => item.name === selected)
   const inputType = selectedMeta?.inputType || selectedMeta?.input_type || (selectedMeta?.category === 'cardio' ? 'cardio' : selectedMeta?.category === 'core' ? 'core' : 'strength')
   const unit = inputType === 'strength' ? 'kg' : inputType === 'cardio' ? '分' : '秒'
   const history = useMemo(() => progress.map(row => {
-    const matchingExercise = sessions
-      .find(workout => workout.date === row.date)
-      ?.session_exercises?.find(exercise => exercise.name === selected)
-    const exactSets = (matchingExercise?.exercise_sets || []).slice().sort((a, b) => a.order_index - b.order_index)
+    const matchingExercises = sessions
+      .filter(workout => workout.date === row.date)
+      .flatMap(workout => workout.session_exercises || [])
+      .filter(exercise => exercise.name === selected)
+      .sort((a, b) => a.order_index - b.order_index)
+    const exactSets = matchingExercises.flatMap(exercise =>
+      (exercise.exercise_sets || []).slice().sort((a, b) => a.order_index - b.order_index),
+    )
+    const notes = [...new Set(matchingExercises.map(exercise => exercise.note?.trim()).filter(Boolean))]
     const best = inputType === 'strength'
       ? Number(row.best_weight) || 0
       : Math.round((Number(row.total_duration_seconds) || 0) / (inputType === 'cardio' ? 60 : 1))
     return {
-      key: `${row.date}-${matchingExercise?.id || selected}`,
+      key: `${row.date}-${matchingExercises.map(exercise => exercise.id).join('-') || selected}`,
       date: formatDate(row.date),
       best,
       oneRm: Number(row.best_estimated_1rm) || null,
       sets: exactSets,
       setCount: Number(row.total_sets) || exactSets.length,
       reps: Number(row.total_reps) || 0,
-      note: matchingExercise?.note || '',
+      note: notes.join('；'),
       volume: Number(row.total_volume) || 0,
     }
   }), [inputType, progress, selected, sessions])
@@ -98,7 +106,7 @@ export default function TrainingScreen({ session }) {
       {history.slice().reverse().map(entry => <RecordCard key={entry.key} entry={entry} unit={unit} inputType={inputType} />)}
     </div>
 
-    {showPicker && <ExercisePicker category={category} selected={selected} setCounts={exerciseSetCounts} customExercises={customExercises} hiddenExerciseNames={hiddenExerciseNames} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
+    {showPicker && <ExercisePicker category={category} selected={selected} setCounts={exerciseSetCounts} customExercises={customExercises} historicalExercises={historicalExercises} hiddenExerciseNames={hiddenExerciseNames} onCategory={setCategory} onClose={() => setShowPicker(false)} onSelect={name => { setSelected(name); setShowPicker(false) }} />}
   </div>
 }
 
@@ -123,10 +131,11 @@ function ProgressLine({ data, unit }) {
   </svg>
 }
 
-function ExercisePicker({ category, selected, setCounts, customExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
+function ExercisePicker({ category, selected, setCounts, customExercises, historicalExercises, hiddenExerciseNames, onCategory, onClose, onSelect }) {
   const builtIn = (WORLD_GYM_LIBRARY[category] || []).map(item => item.name)
   const custom = customExercises.filter(item => item.category === category).map(item => item.name)
-  const names = [...new Set([...custom, ...builtIn])]
+  const historical = historicalExercises.filter(item => item.category === category).map(item => item.name)
+  const names = [...new Set([...custom, ...historical, ...builtIn])]
     .filter(name => !hiddenExerciseNames.includes(name))
     .sort((a, b) => (setCounts[b] || 0) - (setCounts[a] || 0) || a.localeCompare(b, 'zh-Hant'))
   return <div className="sheet-backdrop training-picker-backdrop" onClick={event => event.target === event.currentTarget && onClose()}>
