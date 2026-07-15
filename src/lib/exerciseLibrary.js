@@ -35,6 +35,7 @@ export const WORLD_GYM_LIBRARY = {
     strength('傳統硬舉', '臀腿、背部、握力', '美式蹲舉架'),
     strength('相撲硬舉', '臀腿、大腿內側', '美式蹲舉架'),
     strength('保加利亞分腿蹲', '股四頭、臀大肌、平衡', '啞鈴／史密斯機'),
+    strength('保加利亞弓箭步', '股四頭、臀大肌、下肢協調', '啞鈴／壺鈴'),
     strength('行走弓箭步', '股四頭、臀大肌、平衡', '多功能草皮'),
     strength('單側負重火箭蹲', '股四頭、臀大肌、下肢穩定', '啞鈴／壺鈴'),
     strength('單側負重側向蹲', '臀腿、內收肌、側向穩定', '啞鈴／壺鈴'),
@@ -110,6 +111,30 @@ export const WORLD_GYM_LIBRARY = {
 export const getAllLibraryExercises = () => Object.entries(WORLD_GYM_LIBRARY).flatMap(([category, exercises]) =>
   exercises.map(exercise => ({ ...exercise, category })),
 )
+
+export const getHistoricalExercises = sessions => {
+  const builtInByName = new Map(getAllLibraryExercises().map(exercise => [exercise.name, exercise]))
+  const historicalByName = new Map()
+
+  for (const workout of sessions || []) {
+    for (const exercise of workout.session_exercises || []) {
+      const name = String(exercise.name || '').trim()
+      if (!name || historicalByName.has(name)) continue
+      const builtIn = builtInByName.get(name)
+      const category = builtIn?.category || (CATEGORY_META[exercise.category] ? exercise.category : 'upper')
+      historicalByName.set(name, builtIn || {
+        name,
+        category,
+        inputType: CATEGORY_META[category].inputType,
+        target: CATEGORY_META[category].fallbackTarget,
+        equipment: '過去訓練紀錄',
+        historical: true,
+      })
+    }
+  }
+
+  return [...historicalByName.values()]
+}
 
 export const getCategoryForExercise = name => {
   const match = getAllLibraryExercises().find(exercise => exercise.name === name)
