@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:nutrition": "node --test scripts/nutrition.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

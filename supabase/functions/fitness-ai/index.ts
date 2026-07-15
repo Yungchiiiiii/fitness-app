@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { applySharedServing, parseSharedServing, stabilizeNutrition } from './nutrition.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -189,15 +190,22 @@ class HttpError extends Error {
 
 async function analyzeFood(body: FoodAnalysisRequest) {
   if (!geminiKey && !groqKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
+  const sharedServing = parseSharedServing(body.description || '')
+  const analysisBody = sharedServing
+    ? {
+      ...body,
+      description: `${body.description || ''}\n系統換算要求：這是 ${sharedServing.diners} 人分食；本階段請先估算照片中整盤／整份的總營養，絕對不要先除以人數。系統會在最後強制換算使用者的份量。`,
+    }
+    : body
   let draft: Record<string, unknown>
   try {
     draft = groqKey
-      ? await analyzeFoodWithGroq(body)
-      : await analyzeFoodWithGemini(body)
+      ? await analyzeFoodWithGroq(analysisBody)
+      : await analyzeFoodWithGemini(analysisBody)
   } catch (primaryError) {
     if (!groqKey || !geminiKey) throw friendlyAiError(primaryError)
     try {
-      draft = await analyzeFoodWithGemini(body)
+      draft = await analyzeFoodWithGemini(analysisBody)
     } catch (fallbackError) {
       console.error('Both food analysis providers failed:', primaryError, fallbackError)
       throw friendlyAiError(fallbackError)
@@ -206,32 +214,34 @@ async function analyzeFood(body: FoodAnalysisRequest) {
 
   if (!draft.isFood) return draft
 
-  // A readable nutrition label is already the best source. If the model had
-  // to infer a normal serving instead, keep the estimate but label it clearly.
-  if (hasUsableNutrition(draft)) {
-    return finalizeFoodAnalysis(draft)
-  }
+  let result: Record<string, unknown> | null = null
+  const hasLabel = String(draft.labelEvidence || '').trim().length > 0
+  if (hasLabel && hasUsableNutrition(draft)) result = finalizeFoodAnalysis(draft)
 
   // Product lookup remains opt-in because Gemini's free tier does not include
   // grounded Google Search. If it is disabled or fails, estimate a normal
   // serving from the identified food and the user's consumed amount.
-  if (enableProductLookup && geminiKey && draft.lookupRecommended && draft.productQuery) {
+  if (!result && enableProductLookup && geminiKey && draft.lookupRecommended && draft.productQuery) {
     try {
-      const researched = await researchPackagedFood(draft, body.description || '')
-      if (hasUsableNutrition(researched)) return researched
+      const researched = await researchPackagedFood(draft, analysisBody.description || '')
+      if (hasUsableNutrition(researched)) result = researched
     } catch (error) {
       console.error('Packaged food lookup failed:', error)
     }
   }
 
-  try {
-    const estimated = await estimateFoodWithoutLabel(draft, body.description || '')
-    if (hasUsableNutrition(estimated)) return finalizeFoodAnalysis({ ...estimated, estimated: true })
-  } catch (error) {
-    console.error('Typical serving estimate failed:', error)
+  if (!result) {
+    try {
+      const estimated = await estimateFoodWithoutLabel(draft, analysisBody.description || '')
+      if (hasUsableNutrition(estimated)) result = finalizeFoodAnalysis({ ...estimated, estimated: true })
+    } catch (error) {
+      console.error('Typical serving estimate failed:', error)
+    }
   }
 
-  return needsNutritionLabel(draft)
+  if (!result && hasUsableNutrition(draft)) result = finalizeFoodAnalysis({ ...draft, estimated: true })
+  if (!result) result = needsNutritionLabel(draft)
+  return applySharedServing(stabilizeNutrition(result), sharedServing)
 }
 
 function hasUsableNutrition(value: Record<string, unknown>) {
@@ -252,19 +262,23 @@ function finalizeFoodAnalysis(draft: Record<string, unknown>) {
 }
 
 async function estimateFoodWithoutLabel(draft: Record<string, unknown>, description: string) {
-  const prompt = `你是繁體中文營養估算助手。照片沒有讀到營養標示，但已辨識出食物。請依台灣常見食物的一般份量，估算使用者這次實際吃下的總熱量、蛋白質、碳水與脂肪。
+  const prompt = `你是繁體中文營養估算助手。照片沒有讀到營養標示，但已辨識出食物。請依台灣常見食物的一般份量，估算照片中整盤餐點的總熱量、蛋白質、碳水與脂肪。
 
 已辨識食物：${draft.name || '未知'}
 使用者備註：${description || '無'}
 實吃數量：${draft.consumedAmount || '依名稱與備註判斷'}
 
 規則：
-1. 使用者說「一個太陽餅」就估算一個一般尺寸太陽餅，不可回傳 0，也不可要求一定要有成分表。
-2. 若品牌或規格不確定，使用同類食品常見值，數字取合理中間值，不要假裝是精確標示。
-3. name 保留食物名稱與實吃數量；note 簡短寫出採用的一般份量與估算依據。
-4. 只有內容完全不是食物時 isFood 才能為 false。
+1. 先逐項列出食材、可食熟重／份數、烹調方式，再加總；不要只憑盤子大小猜一個總數。相同食材與份量即使照片角度不同，應採相近數值。
+2. 估算錨點採台灣官方食物代換概念：熟蔬菜半碗約 100g、25 kcal；全穀雜糧一份約 70 kcal；低／中／高脂肉魚蛋豆一份約 55／75／120 kcal；食用油 5g（約一茶匙）45 kcal。
+3. 清蒸、水煮、汆燙不額外加油；炒、煎、紅燒要另外計入合理的吸附油；油炸必須採油炸後食品資料，不可只用生食材熱量。看不清油量時用合理中間值並給區間，不可因光澤或拍攝角度直接把總熱量翻倍。
+4. 食材基礎值優先對照衛福部食藥署台灣食品營養成分資料庫的相同食物與熟／生狀態；資料庫是每 100g 時，必須依估計重量換算。
+5. kcal 應大致符合蛋白質×4＋碳水×4＋脂肪×9；合理區間通常以中間值上下 15–25%，不要製造不合理的超大範圍。
+6. 如果備註提到多人分食，仍先回傳整盤總量，絕對不可先除以人數；系統稍後會強制換算。
+7. 若品牌或規格不確定，使用同類食品常見值，數字取合理中間值，不要假裝是精確標示。name 保留食物名稱與整盤內容；note 簡短寫出重量、油量與估算依據。
+8. 只有內容完全不是食物時 isFood 才能為 false；可辨識的一般食物不可回傳 0。
 只回傳 JSON，不要 markdown：
-{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"食物與實吃份量","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一般份量估算依據","consumedAmount":"實吃數量","estimated":true}`
+{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"整盤食物名稱","kcal":中間值數字,"kcalRange":[合理下限,合理上限],"protein":數字,"carbs":數字,"fat":數字,"note":"重量、烹調油與資料依據","consumedAmount":"整盤份量","dishBreakdown":[{"name":"食材","amount":"熟重或份數","cooking":"烹調方式","kcal":數字}],"estimated":true}`
 
   const text = groqKey
     ? await callGroq([
@@ -279,6 +293,7 @@ async function estimateFoodWithoutLabel(draft: Record<string, unknown>, descript
     lookupRecommended: false,
     lookupUsed: false,
     estimated: true,
+    sources: nutritionReferenceSources,
   })
 }
 
@@ -327,14 +342,14 @@ async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
 function foodAnalysisInstruction() {
   return `你是繁體中文營養分析助手。根據照片與使用者描述計算這次實際吃下的餐點營養。所有照片都屬於同一餐，可能包含食物正面、營養標示或分批上菜；請合併分析，避免重複計算。
 判讀規則：
-1. 使用者描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆，所有營養數字按比例換算，名稱也標示「（一顆）」。
+1. 使用者描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆。若描述提到多人分食，這個辨識階段必須先估整盤總量，不可自行除以人數；系統會在最後強制換算。
 2. 照片若有營養標示，逐字讀取每份量、本包裝含幾份、熱量、蛋白質、碳水與脂肪。包裝標示比一般食物估算可靠。
 3. 沒有讀到營養標示時，只要能從照片或備註知道食物種類與數量，就必須依常見的一般份量估算熱量與三大營養素，不可因缺少成分表而全部填 0。note 必須註明是一般份量估算。
 4. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格。自製或無品牌的一般餐點則填 false。
 5. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
-{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含實吃份量的餐點名稱","kcal":數字,"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算或換算依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"這次實際吃的數量"}
+{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含份量的餐點名稱","kcal":數字,"kcalRange":[合理下限,合理上限],"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算或換算依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"辨識的整盤或實吃數量"}
 如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。`
 }
 
@@ -547,6 +562,9 @@ function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
     meal: ['早餐', '午餐', '晚餐', '點心'].includes(String(parsed.meal)) ? String(parsed.meal) : '點心',
     name: String(parsed.name || (isFood ? '未命名餐點' : '無餐點')).slice(0, 160),
     kcal: isFood ? nutritionNumber(parsed.kcal) : 0,
+    kcalRange: isFood && Array.isArray(parsed.kcalRange)
+      ? parsed.kcalRange.slice(0, 2).map(nutritionNumber)
+      : [],
     protein: isFood ? nutritionNumber(parsed.protein) : 0,
     carbs: isFood ? nutritionNumber(parsed.carbs) : 0,
     fat: isFood ? nutritionNumber(parsed.fat) : 0,
@@ -558,9 +576,15 @@ function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
     consumedAmount: String(parsed.consumedAmount || '').slice(0, 100),
     estimated: parsed.estimated === true,
     needsNutritionLabel: parsed.needsNutritionLabel === true,
+    dishBreakdown: Array.isArray(parsed.dishBreakdown) ? parsed.dishBreakdown.slice(0, 12) : [],
     sources,
   }
 }
+
+const nutritionReferenceSources = [
+  { title: '衛福部食藥署食品營養成分資料庫', url: 'https://consumer.fda.gov.tw/Food/TFND.aspx?nodeID=178' },
+  { title: '國民健康署食物代換與份量參考', url: 'https://health.hpa.gov.tw/UploadFolder/upload/files/04_%E8%81%B7%E5%A0%B4%E5%81%A5%E5%BA%B7%E6%88%91%E7%9A%84%E9%A4%90%E7%9B%A4.pdf' },
+]
 
 function nutritionNumber(value: unknown) {
   const number = Number(value)

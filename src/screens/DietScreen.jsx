@@ -512,6 +512,8 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
                 <div style={{ color: 'var(--ink-3)', fontSize: 13, marginTop: 6 }}>
                   {analysis.kcal} kcal · P {formatMacro(analysis.protein)}g · C {formatMacro(analysis.carbs)}g · F {formatMacro(analysis.fat)}g
                 </div>
+                {analysis.shareCount > 1 && <div className="analysis-share-note">已按 {analysis.shareCount} 人平分，這筆只記錄你的 {Math.round(analysis.servingFraction * analysis.shareCount)}/{analysis.shareCount}</div>}
+                {analysis.kcalRange?.length === 2 && <div className="analysis-kcal-range">合理估算區間：{analysis.kcalRange[0]}–{analysis.kcalRange[1]} kcal</div>}
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
                 {analysis.estimated && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>未讀到成分表，本次為一般份量估算；仍可直接加入或改用手動調整。</div>}
                 {analysis.needsNutritionLabel && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>請補拍包裝背面的營養標示，再按一次分析；本次不會加入 0 熱量紀錄。</div>}
