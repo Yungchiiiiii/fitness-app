@@ -20,7 +20,7 @@ const currentMonth = today.getMonth()
 const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
 const dateForDay = day => `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
-export default function DietScreen({ session }) {
+export default function DietScreen({ session, refreshKey = 0 }) {
   const prototypeOnly = !!session?.prototype
   const [selectedDay, setSelectedDay] = useState(todayDay)
   const [showAdd, setShowAdd] = useState(false)
@@ -71,7 +71,7 @@ export default function DietScreen({ session }) {
     else setFrequentFoods(data || [])
   }
 
-  useEffect(() => { reload(); reloadFrequentFoods() }, [session?.user?.id, prototypeOnly])
+  useEffect(() => { reload(); reloadFrequentFoods() }, [refreshKey, session?.user?.id, prototypeOnly])
   useEffect(() => {
     const timer = window.setInterval(() => setClock(new Date()), 60_000)
     return () => window.clearInterval(timer)

@@ -5,7 +5,7 @@ import { CATEGORY_META, WORLD_GYM_LIBRARY, getExerciseByName, getHistoricalExerc
 const categoryKeys = Object.keys(CATEGORY_META)
 const formatDate = value => new Date(`${value}T00:00:00`).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })
 
-export default function TrainingScreen({ session }) {
+export default function TrainingScreen({ session, refreshKey = 0 }) {
   const [selected, setSelected] = useState('槓鈴深蹲')
   const [showPicker, setShowPicker] = useState(false)
   const [category, setCategory] = useState('lower')
@@ -41,7 +41,7 @@ export default function TrainingScreen({ session }) {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [selected, session?.user?.id])
+  }, [refreshKey, selected, session?.user?.id])
 
   const historicalExercises = useMemo(() => getHistoricalExercises(sessions), [sessions])
   const selectedMeta = getExerciseByName(selected) || customExercises.find(item => item.name === selected) || historicalExercises.find(item => item.name === selected)
