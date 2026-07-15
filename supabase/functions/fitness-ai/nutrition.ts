@@ -14,7 +14,7 @@ export function parseSharedServing(description = ''): SharedServing | null {
     const denominator = Number(explicitFraction[2])
     if (numerator > 0 && denominator > numerator && denominator <= 20) return { diners: denominator, fraction: numerator / denominator }
   }
-  const peopleMatch = normalized.match(/([0-9一二兩三四五六七八九十]+)(?:個|位)?人(?:一起|共同|平分|分食|分享|分著)?(?:吃|食用|享用)?/)
+  const peopleMatch = normalized.match(/([0-9一二兩三四五六七八九十]+)(?:個|位)?人(?:(?:一起|共同|平分|分食|分享|分著))*(?:吃|食用|享用)?/)
     || normalized.match(/(?:給|供)([0-9一二兩三四五六七八九十]+)(?:個|位)?人/)
   if (!peopleMatch) return null
   const diners = parseChineseNumber(peopleMatch[1])

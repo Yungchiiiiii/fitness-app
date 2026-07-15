@@ -5,6 +5,7 @@ import { applySharedServing, parseSharedServing, stabilizeNutrition } from '../s
 test('parses common Chinese shared-meal notes', () => {
   assert.deepEqual(parseSharedServing('這盤三個人吃'), { diners: 3, fraction: 1 / 3 })
   assert.deepEqual(parseSharedServing('3 人一起平分'), { diners: 3, fraction: 1 / 3 })
+  assert.deepEqual(parseSharedServing('三個人平分一起吃'), { diners: 3, fraction: 1 / 3 })
   assert.deepEqual(parseSharedServing('我只吃 1/3 份'), { diners: 3, fraction: 1 / 3 })
   assert.equal(parseSharedServing('我一個人吃'), null)
 })
