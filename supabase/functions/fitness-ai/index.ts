@@ -30,6 +30,11 @@ type ExerciseImageAnalysisRequest = {
   images?: Array<{ mimeType: string; data: string }>
 }
 
+type DailyNutritionAdviceRequest = {
+  task: 'daily-nutrition-advice'
+  date: string
+}
+
 const geminiKey = Deno.env.get('GEMINI_API_KEY')
 const groqKey = Deno.env.get('GROQ_API_KEY')
 const geminiModel = 'gemini-3.5-flash'
@@ -42,7 +47,7 @@ Deno.serve(async (req) => {
 
   try {
     const { client, user } = await requireUser(req)
-    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest | ExerciseImageAnalysisRequest
+    const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest | ExerciseImageAnalysisRequest | DailyNutritionAdviceRequest
 
     if (body.task === 'food-analysis') {
       const meal = await analyzeFood(body)
@@ -63,7 +68,9 @@ Deno.serve(async (req) => {
       return json({ reply })
     }
     if (body.task === 'exercise-classification') {
-      return json({ classification: await classifyExercise(body) })
+      const classification = await classifyExercise(body)
+      await logAiEvent(client, user.id, 'exercise-classification', { name: body.name.slice(0, 200) }, classification)
+      return json({ classification })
     }
     if (body.task === 'exercise-image-analysis') {
       const exercise = await analyzeExerciseImage(body)
@@ -72,6 +79,9 @@ Deno.serve(async (req) => {
         imageCount: getExerciseImages(body).length,
       }, exercise)
       return json({ exercise })
+    }
+    if (body.task === 'daily-nutrition-advice') {
+      return json(await dailyNutritionAdvice(client, user.id, body))
     }
     return json({ error: 'Unknown task' }, 400)
   } catch (error) {
@@ -90,6 +100,80 @@ async function requireUser(req: Request) {
   const { data, error } = await client.auth.getUser(authorization.slice('Bearer '.length))
   if (error || !data.user) throw new HttpError('雲端身分已失效，請重新整理後再試。', 401)
   return { client, user: data.user }
+}
+
+async function dailyNutritionAdvice(client: ReturnType<typeof createClient>, userId: string, body: DailyNutritionAdviceRequest) {
+  const date = String(body.date || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError('日期格式不正確。', 400)
+
+  const [{ data: meals, error: mealError }, { data: profile, error: profileError }] = await Promise.all([
+    client.from('food_logs')
+      .select('id, meal, name, kcal, protein, carbs, fat, note, updated_at')
+      .eq('user_id', userId)
+      .eq('date', date)
+      .order('logged_at', { ascending: true }),
+    client.from('profiles')
+      .select('calories_target, protein_target, carbs_target, fat_target, goal')
+      .eq('id', userId)
+      .maybeSingle(),
+  ])
+  if (mealError) throw new HttpError(`讀取飲食紀錄失敗：${mealError.message}`, 500)
+  if (profileError) throw new HttpError(`讀取營養目標失敗：${profileError.message}`, 500)
+
+  const foodFingerprint = (meals || []).map(meal => [
+    meal.id, meal.meal, meal.name, meal.kcal, meal.protein, meal.carbs, meal.fat, meal.note, meal.updated_at,
+  ].join('|')).join('~')
+
+  const { data: cached } = await client.from('ai_events')
+    .select('input, output')
+    .eq('user_id', userId)
+    .eq('kind', 'daily-nutrition-advice')
+    .order('created_at', { ascending: false })
+    .limit(12)
+
+  const match = (cached || []).find(event => event.input?.date === date && event.input?.foodFingerprint === foodFingerprint)
+  if (typeof match?.output?.advice === 'string' && match.output.advice.trim()) {
+    return { advice: match.output.advice.trim(), cached: true }
+  }
+
+  if (!meals?.length) return { advice: '這一天還沒有飲食紀錄，先記下餐點後我才能整理建議。', cached: false }
+
+  const totals = meals.reduce((sum, meal) => ({
+    calories: sum.calories + (Number(meal.kcal) || 0),
+    protein: sum.protein + (Number(meal.protein) || 0),
+    carbs: sum.carbs + (Number(meal.carbs) || 0),
+    fat: sum.fat + (Number(meal.fat) || 0),
+  }), { calories: 0, protein: 0, carbs: 0, fat: 0 })
+
+  const prompt = `你是繁體中文的每日飲食教練。請根據以下單日飲食紀錄與個人目標，寫一段溫和、具體、可執行的建議。
+日期：${date}
+個人目標：${JSON.stringify(profile || {})}
+當日總量：${JSON.stringify(totals)}
+餐點：${JSON.stringify(meals)}
+
+規則：
+1. 只能根據紀錄提出意見，不可假裝知道未記錄的內容。
+2. 先用一句話說做得好的地方，再給 1 到 2 個最重要的調整。
+3. 若總量明顯不足，提醒可能是尚未記完整，不要直接斷言吃太少。
+4. 不做疾病診斷，不使用恐嚇語氣。
+5. 全文 70 到 140 個繁體中文字，直接輸出建議，不要標題、markdown 或 JSON。`
+
+  let advice: string
+  try {
+    advice = groqKey
+      ? await callGroq([
+        { role: 'system', content: '你是溫和、務實的繁體中文每日飲食教練。' },
+        { role: 'user', content: prompt },
+      ])
+      : await callGemini([{ text: prompt }])
+  } catch (error) {
+    throw friendlyAiError(error)
+  }
+  advice = advice.trim().slice(0, 700)
+  if (!advice) throw new HttpError('AI 暫時沒有產生有效建議，請稍後再試。', 503)
+
+  await logAiEvent(client, userId, 'daily-nutrition-advice', { date, foodFingerprint, totals }, { advice })
+  return { advice, cached: false }
 }
 
 async function logAiEvent(client: ReturnType<typeof createClient>, userId: string, kind: string, input: unknown, output: unknown) {

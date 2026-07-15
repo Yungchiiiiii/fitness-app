@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { analyzeFoodWithGemini } from '../lib/ai'
+import { analyzeFoodWithGemini, getDailyNutritionAdvice } from '../lib/ai'
 import {
   createFoodLog,
   createFrequentFood,
@@ -30,7 +30,15 @@ export default function DietScreen({ session }) {
   const [error, setError] = useState('')
   const [clock, setClock] = useState(() => new Date())
   const day = calendar[selectedDay] || emptyDay
-  const showDailyAdvice = selectedDay !== todayDay || clock.getHours() >= 22
+  const selectedDate = dateForDay(selectedDay)
+  const todayDate = dateForDay(todayDay)
+  const adviceEligible = selectedDate < todayDate || (selectedDate === todayDate && clock.getHours() >= 22)
+  const mealFingerprint = day.meals.map(meal => [meal.id, meal.name, meal.food, meal.kcal, meal.protein, meal.carbs, meal.fat, meal.note].join('|')).join('~')
+  const [dailyAdvice, setDailyAdvice] = useState({ date: '', fingerprint: '', status: 'idle', text: '', error: '' })
+  const [adviceRetry, setAdviceRetry] = useState(0)
+  const currentAdvice = dailyAdvice.date === selectedDate && dailyAdvice.fingerprint === mealFingerprint
+    ? dailyAdvice
+    : { status: 'loading', text: '', error: '' }
 
   const reload = async () => {
     if (prototypeOnly || !session?.user?.id) return
@@ -68,6 +76,26 @@ export default function DietScreen({ session }) {
     const timer = window.setInterval(() => setClock(new Date()), 60_000)
     return () => window.clearInterval(timer)
   }, [])
+  useEffect(() => {
+    if (!adviceEligible) return
+    if (prototypeOnly) {
+      setDailyAdvice({ date: selectedDate, fingerprint: mealFingerprint, status: 'ready', text: day.advice, error: '' })
+      return
+    }
+    if (loading) return
+    if (!day.meals.length) {
+      setDailyAdvice({ date: selectedDate, fingerprint: mealFingerprint, status: 'ready', text: '這一天還沒有飲食紀錄，先記下餐點後我才能整理建議。', error: '' })
+      return
+    }
+    let cancelled = false
+    setDailyAdvice({ date: selectedDate, fingerprint: mealFingerprint, status: 'loading', text: '', error: '' })
+    getDailyNutritionAdvice(selectedDate).then(text => {
+      if (!cancelled) setDailyAdvice({ date: selectedDate, fingerprint: mealFingerprint, status: 'ready', text, error: '' })
+    }).catch(adviceError => {
+      if (!cancelled) setDailyAdvice({ date: selectedDate, fingerprint: mealFingerprint, status: 'error', text: '', error: adviceError.message || 'AI 建議暫時無法載入' })
+    })
+    return () => { cancelled = true }
+  }, [adviceEligible, adviceRetry, day.advice, day.meals.length, loading, mealFingerprint, prototypeOnly, selectedDate])
 
   const addMeal = async (meal) => {
     const normalized = normalizeMeal(meal)
@@ -201,8 +229,11 @@ export default function DietScreen({ session }) {
       </div>
 
       <div className="section-title">當日 AI 建議</div>
-      <div className={`card daily-advice ${showDailyAdvice ? 'ready' : 'waiting'}`}>
-        {showDailyAdvice ? day.advice : '今晚 10:00 會依照整天的飲食紀錄整理 AI 建議。'}
+      <div className={`card daily-advice ${adviceEligible ? currentAdvice.status : 'waiting'}`} aria-live="polite">
+        {!adviceEligible && '今晚 10:00 會依照整天的飲食紀錄整理 AI 建議。'}
+        {adviceEligible && currentAdvice.status === 'loading' && 'AI 正在依照這一天的餐點整理建議…'}
+        {adviceEligible && currentAdvice.status === 'error' && <><span>{currentAdvice.error}</span><button onClick={() => setAdviceRetry(value => value + 1)}>再試一次</button></>}
+        {adviceEligible && currentAdvice.status === 'ready' && currentAdvice.text}
       </div>
 
       <div className="section-title">當日飲食</div>
@@ -234,17 +265,9 @@ function CalendarGrid({ selectedDay, onSelect, data, daysInMonth: monthDays }) {
         const hasData = !!data[day]
         const active = selectedDay === day
         return (
-          <button key={day} onClick={() => onSelect(day)} style={{
-            aspectRatio: '1 / 1',
-            borderRadius: 14,
-            background: active ? 'linear-gradient(135deg, #FF7A1E, #F43F5E)' : hasData ? '#FFF0DC' : '#fff',
-            color: active ? '#fff' : hasData ? 'var(--orange-d)' : 'var(--ink-4)',
-            fontWeight: 900,
-            boxShadow: active ? '0 10px 20px rgba(249,115,22,0.22)' : 'inset 0 0 0 1px var(--line)',
-            position: 'relative',
-          }}>
+          <button key={day} onClick={() => onSelect(day)} className={`diet-calendar-day ${hasData ? 'has-data' : ''} ${active ? 'active' : ''}`}>
             {day}
-            {hasData && <span style={{ position: 'absolute', width: 5, height: 5, borderRadius: 99, background: active ? '#fff' : '#F43F5E', bottom: 6, left: '50%', transform: 'translateX(-50%)' }} />}
+            {hasData && <span />}
           </button>
         )
       })}

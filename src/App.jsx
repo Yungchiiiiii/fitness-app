@@ -121,7 +121,7 @@ export default function App() {
         {TABS.map(t => (
           <button key={t.id} className={`tab-item ${tab === t.id ? 'active' : ''}`} onClick={() => changeTab(t.id)}>
             <t.icon />
-            {t.label}
+            <span>{t.label}</span>
           </button>
         ))}
       </nav>
