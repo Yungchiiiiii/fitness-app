@@ -29,6 +29,7 @@ export default function App() {
   const [bootError, setBootError] = useState('')
   const [profileState, setProfileState] = useState({ status: 'idle', profile: null, error: '' })
   const [profileRetry, setProfileRetry] = useState(0)
+  const [cloudRefreshKey, setCloudRefreshKey] = useState(0)
 
   const restoreSession = async () => {
     setBootError('')
@@ -60,6 +61,19 @@ export default function App() {
       setBootReady(true)
     })
     return () => subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    const refreshVisibleData = () => {
+      if (document.visibilityState === 'visible') setCloudRefreshKey(current => current + 1)
+    }
+    const refreshRestoredPage = () => setCloudRefreshKey(current => current + 1)
+    document.addEventListener('visibilitychange', refreshVisibleData)
+    window.addEventListener('pageshow', refreshRestoredPage)
+    return () => {
+      document.removeEventListener('visibilitychange', refreshVisibleData)
+      window.removeEventListener('pageshow', refreshRestoredPage)
+    }
   }, [])
 
   useEffect(() => {
@@ -97,9 +111,9 @@ export default function App() {
   }
 
   const screens = {
-    home:     <HomeScreen session={session} />,
-    training: <TrainingScreen session={session} />,
-    diet:     <DietScreen session={session} />,
+    home:     <HomeScreen session={session} refreshKey={cloudRefreshKey} />,
+    training: <TrainingScreen session={session} refreshKey={cloudRefreshKey} />,
+    diet:     <DietScreen session={session} refreshKey={cloudRefreshKey} />,
     coach:    <CoachScreen session={session} />,
   }
 

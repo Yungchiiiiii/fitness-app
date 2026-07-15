@@ -20,7 +20,7 @@ const isoDate = date => {
   return new Date(date.getTime() - offset * 60000).toISOString().slice(0, 10)
 }
 
-export default function HomeScreen({ session }) {
+export default function HomeScreen({ session, refreshKey = 0 }) {
   const prototypeOnly = Boolean(session.prototype)
   const today = useMemo(() => new Date(), [])
   const todayString = isoDate(today)
@@ -50,7 +50,7 @@ export default function HomeScreen({ session }) {
       setNutrition(nutritionResult.data?.[0] || null)
       setProfile(profileResult.data || null)
     })
-  }, [prototypeOnly, session.user.id, todayString])
+  }, [prototypeOnly, refreshKey, session.user.id, todayString])
 
   useEffect(() => {
     const syncGoals = event => setProfile(previous => ({
