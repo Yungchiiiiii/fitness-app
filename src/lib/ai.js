@@ -52,6 +52,14 @@ export async function askCoachWithAI({ prompt, context }) {
   return data?.reply?.trim() || '我暫時沒有取得有效回覆，請再問一次。'
 }
 
+export async function getDailyNutritionAdvice(date) {
+  const { data, error } = await supabase.functions.invoke('fitness-ai', {
+    body: { task: 'daily-nutrition-advice', date },
+  })
+  if (error) throw new Error(await functionErrorMessage(error, '無法取得當日 AI 建議'))
+  return data?.advice?.trim() || '目前沒有足夠的飲食紀錄可以整理建議。'
+}
+
 export async function classifyExerciseWithAI(name) {
   const cleanName = String(name || '').trim()
   if (!cleanName) throw new Error('請先輸入動作或器械名稱')

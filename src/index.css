@@ -149,6 +149,8 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 
 .tab-item {
   flex: 1;
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -158,12 +160,41 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.3px;
-  transition: color 0.15s;
+  transition: color 0.18s ease;
+}
+.tab-item::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -2px 3px -1px;
+  border: 1px solid transparent;
+  border-radius: 25px;
+  opacity: 0;
+  transform: scale(.62,.72) translateY(5px);
+  pointer-events: none;
 }
 .tab-item.active { color: var(--blue); }
+.tab-item.active::before {
+  opacity: 1;
+  background: linear-gradient(155deg, rgba(255,255,255,.15), rgba(255,255,255,.055));
+  border-color: rgba(255,255,255,.14);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.09), 0 7px 18px rgba(0,0,0,.28);
+  animation: tabBubbleIn .58s cubic-bezier(.18,.82,.22,1.18) both;
+}
+.tab-item svg,.tab-item > span { position: relative; z-index: 1; }
 .tab-item svg { width: 26px; height: 26px; }
-.tab-item.active svg { animation: tabIconIn .28s cubic-bezier(.2,.85,.25,1); }
-@keyframes tabIconIn { from { transform: translateY(3px) scale(.86); opacity: .55; } to { transform: translateY(0) scale(1); opacity: 1; } }
+.tab-item.active svg { animation: tabIconIn .46s cubic-bezier(.18,.9,.2,1.2); }
+@keyframes tabBubbleIn {
+  0% { opacity: 0; border-radius: 50%; transform: scale(.55,.68) translateY(7px); }
+  48% { opacity: 1; border-radius: 29px; transform: scale(1.09,1.07) translateY(-1px); }
+  72% { transform: scale(.96,1.02) translateY(0); }
+  100% { opacity: 1; border-radius: 25px; transform: scale(1); }
+}
+@keyframes tabIconIn {
+  0% { transform: translateY(4px) scale(.78); opacity: .5; }
+  62% { transform: translateY(-1px) scale(1.1); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
 
 /* ── Section title ── */
 .section-title {
@@ -792,7 +823,7 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 
 .custom-exercise-form { margin-top: 14px; padding: 18px; border: 1px solid rgba(166,255,50,.24); border-radius: 20px; background: #111113; display: grid; gap: 13px; }
 .custom-exercise-form > strong { font-size: 17px; }
-.custom-exercise-form input,.custom-exercise-form select { width: 100%; min-width: 0; border: 1px solid rgba(255,255,255,.13); border-radius: 12px; background: #202023; color: #fff; padding: 13px; outline: 0; }
+.custom-exercise-form input,.custom-exercise-form select { width: 100%; min-width: 0; min-height: 50px; border: 1px solid rgba(255,255,255,.13); border-radius: 13px; background: #202023; color: #fff; padding: 14px; font-size: 15px; outline: 0; }
 .custom-exercise-form > input { min-height: 64px; padding: 16px; border-radius: 16px; font-size: 20px; line-height: 1.35; }
 .custom-exercise-form > input:focus { border-color: rgba(166,255,50,.6); box-shadow: 0 0 0 4px rgba(166,255,50,.1); }
 .exercise-photo-intro { display: grid; gap: 4px; margin-top: 3px; }
@@ -884,6 +915,14 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .weekly-weight-controls .btn-primary { width: auto; padding: 0 18px; white-space: nowrap; }
 .daily-advice { color: var(--ink-2); font-size: 14px; line-height: 1.55; font-weight: 750; }
 .daily-advice.waiting { color: var(--ink-3); border-style: dashed; }
+.daily-advice.loading { color: var(--ink-3); }
+.daily-advice.error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #ff9f92; }
+.daily-advice.error button { flex: 0 0 auto; border-radius: 99px; padding: 8px 11px; background: rgba(255,255,255,.09); color: #fff; }
+.diet-calendar-day { aspect-ratio: 1; border-radius: 14px; background: #171719; color: var(--ink-4); font-weight: 900; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); position: relative; transition: transform .18s ease, background .18s ease, color .18s ease; }
+.diet-calendar-day.has-data { background: #5a4638; color: #f7e2cf; box-shadow: inset 0 0 0 1px rgba(237,190,149,.25); }
+.diet-calendar-day.has-data > span { position: absolute; width: 6px; height: 6px; border-radius: 99px; background: #df8a55; bottom: 6px; left: 50%; transform: translateX(-50%); box-shadow: 0 0 0 2px rgba(223,138,85,.13); }
+.diet-calendar-day.active { background: linear-gradient(135deg, #ff7a1e, #f43f5e); color: #fff; box-shadow: 0 10px 20px rgba(249,115,22,.22); transform: scale(1.03); }
+.diet-calendar-day.active > span { background: #fff; box-shadow: none; }
 .training-empty { color: #aaaab0; margin-top: 16px; line-height: 1.5; }
 .history-record-title { color: #aaaab0; font-size: 17px; margin: 22px 0 12px; }
 .training-record-list { display: grid; gap: 11px; }
@@ -1085,4 +1124,5 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+  .tab-item.active::before { transform: scale(1); }
 }
