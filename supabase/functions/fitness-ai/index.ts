@@ -284,8 +284,8 @@ async function estimateFoodWithoutLabel(draft: Record<string, unknown>, descript
     ? await callGroq([
       { role: 'system', content: '你是台灣常見食物營養估算助手；缺少成分表時仍要提供合理的一般份量估算。' },
       { role: 'user', content: prompt },
-    ], 'llama-3.1-8b-instant')
-    : await callGemini([{ text: prompt }])
+    ], 'llama-3.1-8b-instant', true)
+    : await callGemini([{ text: prompt }], true)
   return normalizeFoodAnalysis({
     ...draft,
     ...parseJson(text),
@@ -336,7 +336,7 @@ async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
     })
   }
 
-  return normalizeFoodAnalysis(parseJson(await callGemini(parts)))
+  return normalizeFoodAnalysis(parseJson(await callGemini(parts, true)))
 }
 
 function foodAnalysisInstruction() {
@@ -426,8 +426,8 @@ target 請用簡短繁體中文列出主要肌群，例如「股四頭肌、臀�
 格式：{"category":"lower","target":"股四頭肌、臀大肌","inputType":"strength"}
 使用者輸入：${name}`
   const text = groqKey
-    ? await callGroq([{ role: 'system', content: '你是精確的健身動作分類助手。' }, { role: 'user', content: instruction }])
-    : await callGemini([{ text: instruction }])
+    ? await callGroq([{ role: 'system', content: '你是精確的健身動作分類助手。' }, { role: 'user', content: instruction }], 'llama-3.1-8b-instant', true)
+    : await callGemini([{ text: instruction }], true)
   const parsed = parseJson(text)
   const category = ['lower', 'upper', 'cardio', 'core'].includes(parsed.category) ? parsed.category : 'upper'
   const inputType = category === 'cardio' ? 'cardio' : category === 'core' ? 'core' : 'strength'
@@ -469,11 +469,11 @@ async function analyzeExerciseImage(body: ExerciseImageAnalysisRequest) {
       text = await callGroq([
         { role: 'system', content: '你是精確、保守的健身器械與運動動作圖片辨識助手。' },
         { role: 'user', content },
-      ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
+      ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant', true)
     } else {
       const parts: Array<Record<string, unknown>> = [{ text: instruction }]
       for (const image of images) parts.push({ inline_data: { mime_type: image.mimeType || 'image/jpeg', data: image.data } })
-      text = await callGemini(parts)
+      text = await callGemini(parts, true)
     }
   } catch (error) {
     throw friendlyExerciseAiError(error)
@@ -541,7 +541,7 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
       content: '你是營養分析助手。你可以根據餐點照片與文字描述估算營養。',
     },
     { role: 'user', content },
-  ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant')
+  ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant', true)
   return normalizeFoodAnalysis(parseJson(text))
 }
 
@@ -596,7 +596,7 @@ function getFoodImages(body: FoodAnalysisRequest) {
   return supplied.filter(image => image?.data).slice(0, 4)
 }
 
-async function callGemini(parts: Array<Record<string, unknown>>) {
+async function callGemini(parts: Array<Record<string, unknown>>, jsonMode = false) {
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${geminiKey}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -605,6 +605,7 @@ async function callGemini(parts: Array<Record<string, unknown>>) {
         temperature: 0.45,
         maxOutputTokens: 900,
         thinkingConfig: { thinkingLevel: 'low' },
+        ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
       },
       contents: [{ role: 'user', parts }],
     }),
@@ -628,6 +629,7 @@ async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
         temperature: 0.2,
         maxOutputTokens: 1200,
         thinkingConfig: { thinkingLevel: 'low' },
+        responseMimeType: 'application/json',
       },
       tools: [{ google_search: {} }],
       contents: [{ role: 'user', parts }],
@@ -657,7 +659,7 @@ async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
   }
 }
 
-async function callGroq(messages: Array<{ role: string; content: unknown }>, model = 'llama-3.1-8b-instant') {
+async function callGroq(messages: Array<{ role: string; content: unknown }>, model = 'llama-3.1-8b-instant', jsonMode = false) {
   if (!groqKey) throw new Error('Server missing GROQ_API_KEY')
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -670,6 +672,7 @@ async function callGroq(messages: Array<{ role: string; content: unknown }>, mod
       temperature: 0.45,
       max_tokens: 900,
       messages,
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     }),
   })
   if (!res.ok) {

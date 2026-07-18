@@ -22,9 +22,7 @@ const fileToImage = file => new Promise((resolve, reject) => {
 export async function analyzeFoodWithGemini({ files = [], description }) {
   if (!files.length && !String(description || '').trim()) throw new Error('請提供照片或文字描述')
   const images = await Promise.all(files.slice(0, 4).map(fileToImage))
-  const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'food-analysis', description, images },
-  })
+  const { data, error } = await invokeFitnessAi({ task: 'food-analysis', description, images })
   if (error) throw new Error(await functionErrorMessage(error, 'AI 分析失敗'))
   const parsed = data?.meal
   if (!parsed) throw new Error('AI 沒有回傳餐點分析')
@@ -49,17 +47,13 @@ export async function analyzeFoodWithGemini({ files = [], description }) {
 }
 
 export async function askCoachWithAI({ prompt, context }) {
-  const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'coach-chat', prompt, context },
-  })
+  const { data, error } = await invokeFitnessAi({ task: 'coach-chat', prompt, context })
   if (error) throw new Error(await functionErrorMessage(error, 'AI 教練回覆失敗'))
   return data?.reply?.trim() || '我暫時沒有取得有效回覆，請再問一次。'
 }
 
 export async function getDailyNutritionAdvice(date) {
-  const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'daily-nutrition-advice', date },
-  })
+  const { data, error } = await invokeFitnessAi({ task: 'daily-nutrition-advice', date })
   if (error) throw new Error(await functionErrorMessage(error, '無法取得當日 AI 建議'))
   return data?.advice?.trim() || '目前沒有足夠的飲食紀錄可以整理建議。'
 }
@@ -67,9 +61,7 @@ export async function getDailyNutritionAdvice(date) {
 export async function classifyExerciseWithAI(name) {
   const cleanName = String(name || '').trim()
   if (!cleanName) throw new Error('請先輸入動作或器械名稱')
-  const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'exercise-classification', name: cleanName },
-  })
+  const { data, error } = await invokeFitnessAi({ task: 'exercise-classification', name: cleanName })
   if (error) throw new Error(await functionErrorMessage(error, 'AI 分類失敗'))
   const classification = data?.classification
   if (!classification?.category || !classification?.target) throw new Error('AI 沒有回傳有效分類')
@@ -82,14 +74,37 @@ export async function analyzeExercisePhotoWithAI({ files = [], description = '' 
   const cleanDescription = String(description || '').trim()
   if (!files.length && !cleanDescription) throw new Error('請拍攝器械、上傳動作照片，或輸入簡短描述')
   const images = await Promise.all(files.slice(0, 2).map(fileToImage))
-  const { data, error } = await supabase.functions.invoke('fitness-ai', {
-    body: { task: 'exercise-image-analysis', description: cleanDescription, images },
-  })
+  const { data, error } = await invokeFitnessAi({ task: 'exercise-image-analysis', description: cleanDescription, images })
   if (error) throw new Error(await functionErrorMessage(error, 'AI 辨識失敗'))
   const exercise = data?.exercise
   if (!exercise?.detected) throw new Error(exercise?.note || '照片中沒有辨識到器械或運動動作，請換一張較清楚的照片。')
   if (!exercise.name || !exercise.category || !exercise.target) throw new Error('AI 沒有回傳完整的運動分類')
   return exercise
+}
+
+const retryableFunctionStatuses = new Set([408, 429, 500, 502, 503, 504])
+
+async function invokeFitnessAi(body) {
+  let lastError
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { data, error } = await supabase.functions.invoke('fitness-ai', { body, timeout: 60_000 })
+    if (!error) return { data, error: null }
+    lastError = error
+
+    const status = Number(error?.context?.status) || 0
+    if (attempt === 0 && status === 401) {
+      const { error: refreshError } = await supabase.auth.refreshSession()
+      if (!refreshError) continue
+    }
+
+    const transientNetworkError = ['FunctionsFetchError', 'FunctionsRelayError'].includes(error?.name)
+    if (attempt === 0 && (transientNetworkError || retryableFunctionStatuses.has(status))) {
+      await new Promise(resolve => setTimeout(resolve, 700))
+      continue
+    }
+    break
+  }
+  return { data: null, error: lastError }
 }
 
 async function functionErrorMessage(error, fallback) {
