@@ -199,16 +199,16 @@ async function analyzeFood(body: FoodAnalysisRequest) {
     : body
   let draft: Record<string, unknown>
   try {
-    draft = groqKey
-      ? await analyzeFoodWithGroq(analysisBody)
-      : await analyzeFoodWithGemini(analysisBody)
+    draft = geminiKey
+      ? await analyzeFoodWithGemini(analysisBody)
+      : await analyzeFoodWithGroq(analysisBody)
   } catch (primaryError) {
     if (!groqKey || !geminiKey) throw friendlyAiError(primaryError)
     try {
-      draft = await analyzeFoodWithGemini(analysisBody)
+      draft = await analyzeFoodWithGroq(analysisBody)
     } catch (fallbackError) {
       console.error('Both food analysis providers failed:', primaryError, fallbackError)
-      throw friendlyAiError(fallbackError)
+      throw friendlyAiError(primaryError)
     }
   }
 
@@ -603,7 +603,7 @@ async function callGemini(parts: Array<Record<string, unknown>>, jsonMode = fals
     body: JSON.stringify({
       generationConfig: {
         temperature: 0.45,
-        maxOutputTokens: 900,
+        maxOutputTokens: jsonMode ? 2400 : 1200,
         thinkingConfig: { thinkingLevel: 'low' },
         ...(jsonMode ? { responseMimeType: 'application/json' } : {}),
       },
@@ -617,7 +617,17 @@ async function callGemini(parts: Array<Record<string, unknown>>, jsonMode = fals
   }
 
   const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || '').join('\n') || ''
+  const candidate = data.candidates?.[0]
+  const text = candidate?.content?.parts
+    ?.filter((part: { thought?: boolean }) => part.thought !== true)
+    .map((part: { text?: string }) => part.text || '')
+    .join('\n')
+    .trim() || ''
+  if (!text) {
+    const reason = candidate?.finishReason || data.promptFeedback?.blockReason || 'empty_content'
+    throw new Error(`Gemini returned no usable text: ${reason}`)
+  }
+  return text
 }
 
 async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
@@ -627,7 +637,7 @@ async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
     body: JSON.stringify({
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 1200,
+        maxOutputTokens: 2400,
         thinkingConfig: { thinkingLevel: 'low' },
         responseMimeType: 'application/json',
       },
@@ -645,8 +655,17 @@ async function callGeminiGrounded(parts: Array<Record<string, unknown>>) {
   const candidate = data.candidates?.[0]
   const groundingMetadata = candidate?.groundingMetadata || {}
   const chunks = groundingMetadata.groundingChunks || []
+  const responseText = candidate?.content?.parts
+    ?.filter((part: { thought?: boolean }) => part.thought !== true)
+    .map((part: { text?: string }) => part.text || '')
+    .join('\n')
+    .trim() || ''
+  if (!responseText) {
+    const reason = candidate?.finishReason || data.promptFeedback?.blockReason || 'empty_content'
+    throw new Error(`Gemini grounded request returned no usable text: ${reason}`)
+  }
   return {
-    text: candidate?.content?.parts?.map((part: { text?: string }) => part.text || '').join('\n') || '',
+    text: responseText,
     searched: Array.isArray(groundingMetadata.webSearchQueries) && groundingMetadata.webSearchQueries.length > 0,
     sources: chunks
       .map((chunk: { web?: { title?: string; uri?: string } }) => ({
