@@ -1036,6 +1036,13 @@ input, textarea, select { font-family: inherit; font-weight: 700; }
 .meal-detail-row small { margin-top: 7px; color: #99999f; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
 .analysis-share-note { margin-top: 10px; padding: 9px 11px; border-radius: 11px; color: #050505; background: var(--neon); font-size: 12px; font-weight: 900; line-height: 1.45; }
 .analysis-kcal-range { margin-top: 8px; color: #c7c7cc; font-size: 12px; font-weight: 800; }
+.analysis-audit-note { margin-top: 9px; color: #30d158; font-size: 12px; font-weight: 900; line-height: 1.5; }
+.analysis-frequent-option { display: flex; align-items: center; gap: 11px; margin-top: 13px; padding: 12px; border: 1px solid rgba(166,255,50,.24); border-radius: 13px; background: rgba(166,255,50,.07); cursor: pointer; }
+.analysis-frequent-option input { width: 20px; height: 20px; flex: 0 0 auto; accent-color: var(--neon); }
+.analysis-frequent-option span,.analysis-frequent-option strong,.analysis-frequent-option small { display: block; }
+.analysis-frequent-option span { min-width: 0; }
+.analysis-frequent-option strong { color: #f7f7f8; font-size: 13px; }
+.analysis-frequent-option small { margin-top: 3px; color: #a8a8ad; font-size: 11px; line-height: 1.45; }
 .meal-detail-row button { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; color: #ff6961; background: rgba(255,69,58,.12); font-size: 12px; }
 .frequent-food-toolbar { display: flex; align-items: center; justify-content: space-between; margin: 15px 1px 10px; }
 .frequent-food-toolbar span { color: #c7c7cc; font-size: 13px; font-weight: 900; }

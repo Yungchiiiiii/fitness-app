@@ -1,5 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { applySharedServing, parseSharedServing, stabilizeNutrition } from './nutrition.ts'
+import {
+  applySharedServing,
+  auditNutrition,
+  parseSharedServing,
+  shouldUseCorrectedNutrition,
+  stabilizeNutrition,
+  type NutritionAudit,
+} from './nutrition.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,14 +58,25 @@ Deno.serve(async (req) => {
     const body = await req.json() as FoodAnalysisRequest | CoachChatRequest | ExerciseClassificationRequest | ExerciseImageAnalysisRequest | DailyNutritionAdviceRequest
 
     if (body.task === 'food-analysis') {
-      const meal = await analyzeFood(body)
       const images = getFoodImages(body)
-      await logAiEvent(client, user.id, 'food-analysis', {
+      const eventInput = {
         description: body.description?.slice(0, 1000) || '',
         imageCount: images.length,
         mimeTypes: images.map(image => image.mimeType),
-      }, meal)
-      return json({ meal })
+      }
+      try {
+        const meal = await analyzeFood(body, client, user.id)
+        await logAiEvent(client, user.id, 'food-analysis', eventInput, { ...meal, status: 'success' })
+        return json({ meal })
+      } catch (error) {
+        const diagnostic = foodAnalysisDiagnostic(error)
+        console.error('Food analysis failed:', diagnostic)
+        await logAiEvent(client, user.id, 'food-analysis', eventInput, {
+          status: 'error',
+          diagnostic,
+        })
+        throw error
+      }
     }
     if (body.task === 'coach-chat') {
       const reply = await coachReply(body)
@@ -188,24 +206,26 @@ class HttpError extends Error {
   }
 }
 
-async function analyzeFood(body: FoodAnalysisRequest) {
+type FoodProvider = 'gemini' | 'groq'
+
+async function analyzeFood(
+  body: FoodAnalysisRequest,
+  client: ReturnType<typeof createClient>,
+  userId: string,
+) {
   if (!geminiKey && !groqKey) throw new Error('Server missing GEMINI_API_KEY or GROQ_API_KEY')
   const sharedServing = parseSharedServing(body.description || '')
-  const analysisBody = sharedServing
-    ? {
-      ...body,
-      description: `${body.description || ''}\n系統換算要求：這是 ${sharedServing.diners} 人分食；本階段請先估算照片中整盤／整份的總營養，絕對不要先除以人數。系統會在最後強制換算使用者的份量。`,
-    }
-    : body
+  const analysisBody = body
   let draft: Record<string, unknown>
+  let primaryProvider: FoodProvider
   try {
-    draft = geminiKey
-      ? await analyzeFoodWithGemini(analysisBody)
-      : await analyzeFoodWithGroq(analysisBody)
+    primaryProvider = geminiKey ? 'gemini' : 'groq'
+    draft = await analyzeFoodWithProvider(analysisBody, primaryProvider)
   } catch (primaryError) {
     if (!groqKey || !geminiKey) throw friendlyAiError(primaryError)
+    primaryProvider = 'groq'
     try {
-      draft = await analyzeFoodWithGroq(analysisBody)
+      draft = await analyzeFoodWithProvider(analysisBody, primaryProvider)
     } catch (fallbackError) {
       console.error('Both food analysis providers failed:', primaryError, fallbackError)
       throw friendlyAiError(primaryError)
@@ -214,6 +234,7 @@ async function analyzeFood(body: FoodAnalysisRequest) {
 
   if (!draft.isFood) return draft
 
+  const recent = await getRecentFoodAnalyses(client, userId)
   let result: Record<string, unknown> | null = null
   const hasLabel = String(draft.labelEvidence || '').trim().length > 0
   if (hasLabel && hasUsableNutrition(draft)) result = finalizeFoodAnalysis(draft)
@@ -230,22 +251,139 @@ async function analyzeFood(body: FoodAnalysisRequest) {
     }
   }
 
-  if (!result) {
+  if (!result && hasUsableNutrition(draft)) {
+    result = finalizeFoodAnalysis({
+      ...draft,
+      estimated: true,
+      sources: nutritionReferenceSources,
+    })
+  }
+
+  if (!result) result = needsNutritionLabel(draft)
+
+  let fullDishResult = stabilizeNutrition(result)
+  let audit = auditFoodResult(
+    fullDishResult,
+    sharedServing,
+    recent,
+    !String(fullDishResult.labelEvidence || '').trim() && fullDishResult.lookupUsed !== true,
+  )
+  let autoCorrected = false
+  let resultProvider = primaryProvider
+
+  if (!String(fullDishResult.labelEvidence || '').trim() && audit.shouldRecheck) {
+    const correctionProvider = audit.repeatedTemplate
+      ? alternateFoodProvider(primaryProvider)
+      : primaryProvider
     try {
-      const estimated = await estimateFoodWithoutLabel(draft, analysisBody.description || '')
-      if (hasUsableNutrition(estimated)) result = finalizeFoodAnalysis({ ...estimated, estimated: true })
+      const correctedDraft = await recheckFoodWithImages(analysisBody, draft, correctionProvider, audit)
+      if (correctedDraft.isFood !== false && hasUsableNutrition(correctedDraft)) {
+        const correctedResult = stabilizeNutrition(finalizeFoodAnalysis({
+          ...correctedDraft,
+          estimated: !String(correctedDraft.labelEvidence || '').trim(),
+          sources: String(correctedDraft.labelEvidence || '').trim()
+            ? correctedDraft.sources
+            : nutritionReferenceSources,
+        }))
+        const correctedAudit = auditFoodResult(
+          correctedResult,
+          sharedServing,
+          recent,
+          !String(correctedResult.labelEvidence || '').trim() && correctedResult.lookupUsed !== true,
+        )
+        if (shouldUseCorrectedNutrition(audit, correctedAudit)) {
+          fullDishResult = correctedResult
+          audit = correctedAudit
+          autoCorrected = true
+          resultProvider = correctionProvider
+        }
+      }
     } catch (error) {
-      console.error('Typical serving estimate failed:', error)
+      console.error('Food nutrition recheck failed; preserving primary result:', error)
     }
   }
 
-  if (!result && hasUsableNutrition(draft)) result = finalizeFoodAnalysis({ ...draft, estimated: true })
-  if (!result) result = needsNutritionLabel(draft)
-  return applySharedServing(stabilizeNutrition(result), sharedServing)
+  const finalResult = applySharedServing(fullDishResult, sharedServing)
+  return {
+    ...finalResult,
+    autoCorrected,
+    analysisAudit: {
+      version: 2,
+      status: autoCorrected ? 'corrected' : audit.issues.length ? 'review' : 'passed',
+      provider: resultProvider,
+      score: audit.score,
+      issues: audit.issues,
+      repeatedTemplate: audit.repeatedTemplate,
+    },
+  }
+}
+
+async function analyzeFoodWithProvider(
+  body: FoodAnalysisRequest,
+  provider: FoodProvider,
+  instruction = foodAnalysisInstruction(),
+) {
+  return provider === 'gemini'
+    ? analyzeFoodWithGemini(body, instruction)
+    : analyzeFoodWithGroq(body, instruction)
+}
+
+function alternateFoodProvider(primary: FoodProvider): FoodProvider {
+  if (primary === 'gemini' && groqKey) return 'groq'
+  if (primary === 'groq' && geminiKey) return 'gemini'
+  return primary
+}
+
+async function getRecentFoodAnalyses(
+  client: ReturnType<typeof createClient>,
+  userId: string,
+) {
+  const { data, error } = await client.from('ai_events')
+    .select('output')
+    .eq('user_id', userId)
+    .eq('kind', 'food-analysis')
+    .order('created_at', { ascending: false })
+    .limit(12)
+  if (error) {
+    console.error('Could not load recent food analyses for audit:', error.message)
+    return []
+  }
+  return (data || [])
+    .map(event => event.output)
+    .filter(output => output && output.status !== 'error' && nutritionNumber(output.kcal) > 0)
+    .map(output => ({
+      name: String(output.name || ''),
+      kcal: nutritionNumber(output.kcal),
+      protein: nutritionNumber(output.protein),
+      carbs: nutritionNumber(output.carbs),
+      fat: nutritionNumber(output.fat),
+    }))
+}
+
+function auditFoodResult(
+  fullDishResult: Record<string, unknown>,
+  sharedServing: ReturnType<typeof parseSharedServing>,
+  recent: Array<Record<string, unknown>>,
+  requireBreakdown: boolean,
+): NutritionAudit {
+  const structural = auditNutrition(fullDishResult, { requireBreakdown })
+  const recordedServing = applySharedServing(fullDishResult, sharedServing)
+  const historyAudit = auditNutrition(recordedServing, { recent })
+  const issues = [...structural.issues]
+  if (historyAudit.repeatedTemplate && !issues.includes('repeated_cross_meal_template')) {
+    issues.push('repeated_cross_meal_template')
+  }
+  return {
+    score: Math.max(0, structural.score - (historyAudit.repeatedTemplate ? 36 : 0)),
+    issues,
+    repeatedTemplate: historyAudit.repeatedTemplate,
+    shouldRecheck: structural.shouldRecheck || historyAudit.repeatedTemplate,
+  }
 }
 
 function hasUsableNutrition(value: Record<string, unknown>) {
-  return ['kcal', 'protein', 'carbs', 'fat'].some(key => nutritionNumber(value[key]) > 0)
+  return nutritionNumber(value.kcal) > 0
+    && ['protein', 'carbs', 'fat'].some(key => nutritionNumber(value[key]) > 0)
 }
 
 function finalizeFoodAnalysis(draft: Record<string, unknown>) {
@@ -261,40 +399,34 @@ function finalizeFoodAnalysis(draft: Record<string, unknown>) {
   }
 }
 
-async function estimateFoodWithoutLabel(draft: Record<string, unknown>, description: string) {
-  const prompt = `你是繁體中文營養估算助手。照片沒有讀到營養標示，但已辨識出食物。請依台灣常見食物的一般份量，估算照片中整盤餐點的總熱量、蛋白質、碳水與脂肪。
+async function recheckFoodWithImages(
+  body: FoodAnalysisRequest,
+  draft: Record<string, unknown>,
+  provider: FoodProvider,
+  audit: NutritionAudit,
+) {
+  const identifiedFood = {
+    meal: draft.meal,
+    name: draft.name,
+    consumedAmount: draft.consumedAmount,
+    productQuery: draft.productQuery,
+  }
+  const instruction = `你是第二道餐點營養稽核。原始照片是主要證據，使用者文字只是輔助。請重新查看所有照片並獨立重算餐點營養；上一輪只提供食物名稱線索，不提供熱量，請勿套用便當 550 kcal 等固定模板。
 
-已辨識食物：${draft.name || '未知'}
-使用者備註：${description || '無'}
-實吃數量：${draft.consumedAmount || '依名稱與備註判斷'}
+初步辨識（僅供核對食物與份量，不含營養數字）：${JSON.stringify(identifiedFood)}
+系統偵測到需要重查的項目：${audit.issues.join(',') || '完整性檢查'}
 
 規則：
-1. 先逐項列出食材、可食熟重／份數、烹調方式，再加總；不要只憑盤子大小猜一個總數。相同食材與份量即使照片角度不同，應採相近數值。
-2. 估算錨點採台灣官方食物代換概念：熟蔬菜半碗約 100g、25 kcal；全穀雜糧一份約 70 kcal；低／中／高脂肉魚蛋豆一份約 55／75／120 kcal；食用油 5g（約一茶匙）45 kcal。
-3. 清蒸、水煮、汆燙不額外加油；炒、煎、紅燒要另外計入合理的吸附油；油炸必須採油炸後食品資料，不可只用生食材熱量。看不清油量時用合理中間值並給區間，不可因光澤或拍攝角度直接把總熱量翻倍。
-4. 食材基礎值優先對照衛福部食藥署台灣食品營養成分資料庫的相同食物與熟／生狀態；資料庫是每 100g 時，必須依估計重量換算。
-5. kcal 應大致符合蛋白質×4＋碳水×4＋脂肪×9；合理區間通常以中間值上下 15–25%，不要製造不合理的超大範圍。
-6. 如果備註提到多人分食，仍先回傳整盤總量，絕對不可先除以人數；系統稍後會強制換算。
-7. 若品牌或規格不確定，使用同類食品常見值，數字取合理中間值，不要假裝是精確標示。name 保留食物名稱與整盤內容；note 簡短寫出重量、油量與估算依據。
-8. 只有內容完全不是食物時 isFood 才能為 false；可辨識的一般食物不可回傳 0。
+1. 先依照片估每一項食物的可食熟重或實際份數與烹調方式。照片看不到的內容不可自行增加。文字只可協助食物名稱、品牌、實吃數量或幾人分食；玩笑、感想、情緒與誇飾不得改變營養估算。除明確實吃份量外，文字和照片衝突時以照片為準。
+2. dishBreakdown 的每一項都要填 kcal、protein、carbs、fat；總熱量與三大營養素必須逐項相加，總 kcal 也要大致符合蛋白質×4＋碳水×4＋脂肪×9。
+3. 清蒸、水煮、汆燙不加看不見的油；炒、煎、紅燒依可見份量估吸附油；油炸用油炸後食物值。不可把不同餐點都四捨五入成相同模板數字。
+4. 若照片是包裝營養標示，逐字採用每份量、包裝份數與使用者實吃份數，labelEvidence 寫出換算依據，dishBreakdown 可留空。
+5. 若是一般餐點，合理區間以視覺份量不確定性設定，通常是中間值上下 15–25%；note 寫出主要重量與用油假設。
+6. 若使用者提到多人分食，仍回傳整盤總量，不可先除人數；系統會在最後換算。
 只回傳 JSON，不要 markdown：
-{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"整盤食物名稱","kcal":中間值數字,"kcalRange":[合理下限,合理上限],"protein":數字,"carbs":數字,"fat":數字,"note":"重量、烹調油與資料依據","consumedAmount":"整盤份量","dishBreakdown":[{"name":"食材","amount":"熟重或份數","cooking":"烹調方式","kcal":數字}],"estimated":true}`
+{"isFood":true,"meal":"早餐/午餐/晚餐/點心","name":"含份量的餐點名稱","kcal":逐項加總數字,"kcalRange":[合理下限,合理上限],"protein":逐項加總數字,"carbs":逐項加總數字,"fat":逐項加總數字,"note":"重量、烹調與用油依據","lookupRecommended":true/false,"productQuery":"品牌 商品 規格","labelEvidence":"讀到的標示與份量換算，沒有則空字串","consumedAmount":"辨識的整盤或實吃數量","dishBreakdown":[{"name":"食材","amount":"熟重或份數","cooking":"烹調方式","kcal":數字,"protein":數字,"carbs":數字,"fat":數字}],"estimated":true}`
 
-  const text = groqKey
-    ? await callGroq([
-      { role: 'system', content: '你是台灣常見食物營養估算助手；缺少成分表時仍要提供合理的一般份量估算。' },
-      { role: 'user', content: prompt },
-    ], 'llama-3.1-8b-instant', true)
-    : await callGemini([{ text: prompt }], true)
-  return normalizeFoodAnalysis({
-    ...draft,
-    ...parseJson(text),
-    labelEvidence: '',
-    lookupRecommended: false,
-    lookupUsed: false,
-    estimated: true,
-    sources: nutritionReferenceSources,
-  })
+  return analyzeFoodWithProvider(body, provider, instruction)
 }
 
 function needsNutritionLabel(draft: Record<string, unknown>) {
@@ -321,9 +453,21 @@ function friendlyAiError(error: unknown) {
   return new HttpError('AI 辨識服務暫時無法使用，請稍後再試，或先用「手動」記錄。', 503)
 }
 
-async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
+function foodAnalysisDiagnostic(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/\b429\b|rate.?limit|quota|resource.?exhausted|額度|上限/i.test(message)) return 'provider_rate_limited'
+  if (/\b401\b|\b403\b|api.?key|permission|金鑰/i.test(message)) return 'provider_auth_failed'
+  if (/JSON|usable text|empty_content|finishReason/i.test(message)) return 'provider_invalid_output'
+  if (/network|fetch|relay|timeout/i.test(message)) return 'provider_unreachable'
+  return 'food_analysis_failed'
+}
+
+async function analyzeFoodWithGemini(
+  body: FoodAnalysisRequest,
+  instruction = foodAnalysisInstruction(),
+) {
   const parts: Array<Record<string, unknown>> = [{
-    text: `${foodAnalysisInstruction()}
+    text: `${instruction}
 使用者描述：${body.description || '無'}`,
   }]
 
@@ -340,16 +484,18 @@ async function analyzeFoodWithGemini(body: FoodAnalysisRequest) {
 }
 
 function foodAnalysisInstruction() {
-  return `你是繁體中文營養分析助手。根據照片與使用者描述計算這次實際吃下的餐點營養。所有照片都屬於同一餐，可能包含食物正面、營養標示或分批上菜；請合併分析，避免重複計算。
+  return `你是繁體中文營養分析助手。照片是主要證據，使用者文字只作輔助。所有照片都屬於同一餐，可能包含食物正面、營養標示或分批上菜；請合併分析，避免重複計算。
 判讀規則：
-1. 使用者描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆。若描述提到多人分食，這個辨識階段必須先估整盤總量，不可自行除以人數；系統會在最後強制換算。
-2. 照片若有營養標示，逐字讀取每份量、本包裝含幾份、熱量、蛋白質、碳水與脂肪。包裝標示比一般食物估算可靠。
-3. 沒有讀到營養標示時，只要能從照片或備註知道食物種類與數量，就必須依常見的一般份量估算熱量與三大營養素，不可因缺少成分表而全部填 0。note 必須註明是一般份量估算。
-4. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格。自製或無品牌的一般餐點則填 false。
-5. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
+1. 先逐張看照片，辨識每一項可見食物、份量與烹調方式；每一項都列入 dishBreakdown。文字只可協助確認食物名稱、品牌、實際吃幾份或幾人分食。像「好好吃」、玩笑、感想、情緒和誇飾都要忽略，不得拿來改變熱量。除明確實吃份量外，文字和照片衝突時以照片為準。
+2. 使用者明確描述的實吃數量優先。例如包裝有兩顆、備註說吃一顆，就只能記錄一顆。若描述提到多人分食，這個辨識階段必須先估整盤總量，不可自行除以人數；系統會在最後強制換算。
+3. 照片若有營養標示，逐字讀取每份量、本包裝含幾份、熱量、蛋白質、碳水與脂肪。包裝標示比一般食物估算可靠。
+4. 沒有營養標示時，依照片估每項可食熟重或實際份數。dishBreakdown 每項都填 kcal、protein、carbs、fat，總數逐項相加；總 kcal 也應大致符合蛋白質×4＋碳水×4＋脂肪×9。不可把不同餐點都套成 500 或 550 kcal 等固定模板。
+5. 清蒸、水煮、汆燙不額外加看不見的油；炒、煎、紅燒依可見份量估吸附油；油炸採油炸後食物值。note 寫出主要重量與用油假設。
+6. 若是超商、超市、品牌食品、飲料、泡麵或包裝商品，lookupRecommended 必須為 true，productQuery 填完整品牌、商品名、口味與規格。自製或無品牌的一般餐點則填 false。
+7. labelEvidence 簡要保留照片中讀到的每份量、包裝份數與營養數字，沒有清楚標示就填空字串。不要把整包營養誤當成單份，也不要把單份誤當整包。
 只回傳 JSON，不要 markdown，不要多餘文字。
 格式：
-{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含份量的餐點名稱","kcal":數字,"kcalRange":[合理下限,合理上限],"protein":數字,"carbs":數字,"fat":數字,"note":"一句估算或換算依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"辨識的整盤或實吃數量"}
+{"isFood":true/false,"meal":"早餐/午餐/晚餐/點心","name":"含份量的餐點名稱","kcal":逐項加總數字,"kcalRange":[合理下限,合理上限],"protein":逐項加總數字,"carbs":逐項加總數字,"fat":逐項加總數字,"note":"重量、烹調與用油依據","lookupRecommended":true/false,"productQuery":"品牌 商品完整名稱 口味 規格","labelEvidence":"照片上可讀到的營養標示與份數","consumedAmount":"辨識的整盤或實吃數量","dishBreakdown":[{"name":"食材","amount":"熟重或份數","cooking":"烹調方式","kcal":數字,"protein":數字,"carbs":數字,"fat":數字}]}
 如果照片或描述不是食物、飲料或餐點，isFood 必須是 false，營養數字都填 0，note 說明沒有辨識到餐點，不要猜熱量。`
 }
 
@@ -515,13 +661,16 @@ function getExerciseImages(body: ExerciseImageAnalysisRequest) {
   return (Array.isArray(body.images) ? body.images : []).filter(image => image?.data).slice(0, 2)
 }
 
-async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
+async function analyzeFoodWithGroq(
+  body: FoodAnalysisRequest,
+  instruction = foodAnalysisInstruction(),
+) {
   const description = body.description?.trim()
   const images = getFoodImages(body)
   const content: Array<Record<string, unknown>> = [
     {
       type: 'text',
-      text: `${foodAnalysisInstruction()}
+      text: `${instruction}
 使用者描述：${description || '無'}`,
     },
   ]
@@ -538,7 +687,7 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
   const text = await callGroq([
     {
       role: 'system',
-      content: '你是營養分析助手。你可以根據餐點照片與文字描述估算營養。',
+      content: '你是營養分析助手。餐點照片是主要證據，使用者文字只是輔助。',
     },
     { role: 'user', content },
   ], images.length ? 'meta-llama/llama-4-scout-17b-16e-instruct' : 'llama-3.1-8b-instant', true)
@@ -547,6 +696,23 @@ async function analyzeFoodWithGroq(body: FoodAnalysisRequest) {
 
 function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
   const isFood = parsed.isFood !== false
+  const dishBreakdown = Array.isArray(parsed.dishBreakdown)
+    ? parsed.dishBreakdown
+      .filter(item => item && typeof item === 'object')
+      .map(item => {
+        const value = item as Record<string, unknown>
+        return {
+          name: String(value.name || '未命名食材').slice(0, 100),
+          amount: String(value.amount || '').slice(0, 100),
+          cooking: String(value.cooking || '').slice(0, 80),
+          kcal: nutritionNumber(value.kcal),
+          protein: nutritionNumber(value.protein),
+          carbs: nutritionNumber(value.carbs),
+          fat: nutritionNumber(value.fat),
+        }
+      })
+      .slice(0, 12)
+    : []
   const sources = Array.isArray(parsed.sources)
     ? parsed.sources
       .filter(source => source && typeof source === 'object')
@@ -576,7 +742,7 @@ function normalizeFoodAnalysis(parsed: Record<string, unknown>) {
     consumedAmount: String(parsed.consumedAmount || '').slice(0, 100),
     estimated: parsed.estimated === true,
     needsNutritionLabel: parsed.needsNutritionLabel === true,
-    dishBreakdown: Array.isArray(parsed.dishBreakdown) ? parsed.dishBreakdown.slice(0, 12) : [],
+    dishBreakdown,
     sources,
   }
 }

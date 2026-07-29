@@ -43,6 +43,10 @@ export async function analyzeFoodWithGemini({ files = [], description }) {
     sources: Array.isArray(parsed.sources) ? parsed.sources.slice(0, 3) : [],
     estimated: parsed.estimated === true,
     needsNutritionLabel: parsed.needsNutritionLabel === true,
+    autoCorrected: parsed.autoCorrected === true,
+    analysisAudit: parsed.analysisAudit && typeof parsed.analysisAudit === 'object'
+      ? parsed.analysisAudit
+      : null,
   }
 }
 

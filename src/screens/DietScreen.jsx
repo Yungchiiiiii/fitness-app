@@ -355,8 +355,13 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
   const [analyzing, setAnalyzing] = useState(false)
   const [analysis, setAnalysis] = useState(null)
   const [analysisError, setAnalysisError] = useState('')
+  const [saveAnalysisAsFrequent, setSaveAnalysisAsFrequent] = useState(false)
+  const [savingAnalysis, setSavingAnalysis] = useState(false)
   const validCustom = custom.name && custom.kcal && custom.protein
   const mealFrequentFoods = frequentFoods.filter(food => food.meal === mealType)
+  const matchingFrequentFood = analysis
+    ? mealFrequentFoods.find(food => food.name.trim().toLocaleLowerCase() === analysis.name.trim().toLocaleLowerCase())
+    : null
   const manualMeal = useMemo(() => ({
     ...custom,
     meal: mealType,
@@ -376,6 +381,7 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
     try {
       const result = await analyzeFoodWithGemini({ files: photoFiles, description: photoDescription })
       setAnalysis(result)
+      setSaveAnalysisAsFrequent(false)
     } catch (error) {
       setAnalysisError(error.message || 'AI 分析失敗')
     } finally {
@@ -390,6 +396,25 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
     const result = await onSaveFrequentFood({ ...quickForm, meal: mealType })
     if (result?.ok) setQuickForm(null)
     setSavingQuick(false)
+  }
+  const addAnalyzedMeal = async () => {
+    if (!analysis || savingAnalysis) return
+    setSavingAnalysis(true)
+    setAnalysisError('')
+    if (saveAnalysisAsFrequent) {
+      const frequentResult = await onSaveFrequentFood({
+        ...analysis,
+        id: matchingFrequentFood?.id,
+        meal: mealType,
+      })
+      if (!frequentResult?.ok) {
+        setAnalysisError('餐點還沒加入：儲存到常吃時發生錯誤，請再試一次。')
+        setSavingAnalysis(false)
+        return
+      }
+    }
+    await onAdd({ ...analysis, meal: mealType, source: 'ai' })
+    setSavingAnalysis(false)
   }
 
   return (
@@ -516,12 +541,28 @@ function AddMealSheet({ frequentFoods, onSaveFrequentFood, onDeleteFrequentFood,
                 {analysis.kcalRange?.length === 2 && <div className="analysis-kcal-range">合理估算區間：{analysis.kcalRange[0]}–{analysis.kcalRange[1]} kcal</div>}
                 <div style={{ color: 'var(--ink-3)', fontSize: 12, marginTop: 8, lineHeight: 1.5 }}>{analysis.note}</div>
                 {analysis.estimated && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>未讀到成分表，本次為一般份量估算；仍可直接加入或改用手動調整。</div>}
+                {analysis.autoCorrected && <div className="analysis-audit-note">已偵測並修正份量或營養計算異常</div>}
                 {analysis.needsNutritionLabel && <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8, fontWeight: 800 }}>請補拍包裝背面的營養標示，再按一次分析；本次不會加入 0 熱量紀錄。</div>}
                 {analysis.lookupUsed && <div style={{ color: '#16A34A', fontSize: 12, marginTop: 8, fontWeight: 800 }}>已用網路資料查證商品與份量</div>}
                 {!!analysis.sources?.length && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                   {analysis.sources.map(source => <a key={source.url} href={source.url} target="_blank" rel="noreferrer" style={{ color: 'var(--neon)', fontSize: 12 }}>查看 {source.title}</a>)}
                 </div>}
-                {!analysis.needsNutritionLabel && <button className="btn-primary" style={{ marginTop: 12 }} onClick={() => onAdd({ ...analysis, meal: mealType, source: 'ai' })}>加入這一天</button>}
+                {!analysis.needsNutritionLabel && <>
+                  <label className="analysis-frequent-option">
+                    <input
+                      type="checkbox"
+                      checked={saveAnalysisAsFrequent}
+                      onChange={event => setSaveAnalysisAsFrequent(event.target.checked)}
+                    />
+                    <span>
+                      <strong>同時加入常吃</strong>
+                      <small>{matchingFrequentFood ? '已存在同名餐點，勾選後會更新營養數值' : '下次可直接從常吃一鍵加入'}</small>
+                    </span>
+                  </label>
+                  <button className="btn-primary" disabled={savingAnalysis} style={{ marginTop: 10 }} onClick={addAnalyzedMeal}>
+                    {savingAnalysis ? '儲存中…' : '加入這一天'}
+                  </button>
+                </>}
               </div>
             )}
           </div>
